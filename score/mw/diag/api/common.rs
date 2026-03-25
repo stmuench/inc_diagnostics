@@ -169,7 +169,92 @@ pub mod uds {
     /// cf. ISO 14229-1:2020, Table A.1
     #[derive(Clone, Debug, PartialEq)]
     pub enum NegativeResponseCode {
-        // TO BE ADDED
+        GeneralReject = 0x10,
+        ServiceNotSupported = 0x11,
+        SubFunctionNotSupported = 0x12,
+        IncorrectMessageLengthOrInvalidFormat = 0x13,
+        ResponseTooLong = 0x14,
+        BusyRepeatRequest = 0x21,
+        ConditionsNotCorrect = 0x22,
+        NoResponseFromSubnetComponent = 0x23,
+        RequestSequenceError = 0x24,
+        NoResponseFromSubNetComponent = 0x25,
+        FailurePreventsExecutionOfRequestedAction = 0x26,
+        RequestOutOfRange = 0x31,
+        SecurityAccessDenied = 0x33,
+        AuthenticationRequired = 0x34,
+        InvalidKey = 0x35,
+        ExceededNumberOfAttempts = 0x36,
+        RequiredTimeDelayNotExpired = 0x37,
+        SecureDataTransmissionRequired = 0x38,
+        SecureDataTransmissionNotAllowed = 0x39,
+        SecureDataVerificationFailed = 0x3A,
+        CertificateVerificationFailedInvalidTimePeriod = 0x50,
+        CertificateVerificationFailedInvalidSignature = 0x51,
+        CertificateVerificationFailedInvalidChainOfTrust = 0x52,
+        CertificateVerificationFailedInvalidType = 0x53,
+        CertificateVerificationFailedInvalidFormat = 0x54,
+        CertificateVerificationFailedInvalidContent = 0x55,
+        CertificateVerificationFailedInvalidScope = 0x56,
+        CertificateVerificationFailedInvalidCertificate = 0x57,
+        OwnershipVerificationFailed = 0x58,
+        ChallengeCalculationFailed = 0x59,
+        SettingAccessRightsFailed = 0x5A,
+        SessionKeyCreationOrDerivationFailed = 0x5B,
+        ConfigurationDataUsageFailed = 0x5C,
+        DeAuthenticationFailed = 0x5D,
+        UploadDownloadNotAccepted = 0x70,
+        TransferDataSuspended = 0x71,
+        GeneralProgrammingFailure = 0x72,
+        WrongBlockSequenceCounter = 0x73,
+        RequestCorrectlyReceivedResponsePending = 0x78,
+        SubFunctionNotSupportedInActiveSession = 0x7E,
+        ServiceNotSupportedInActiveSession = 0x7F,
+        RpmTooHigh = 0x81,
+        RpmTooLow = 0x82,
+        EngineIsRunning = 0x83,
+        EngineIsNotRunning = 0x84,
+        EngineRunTimeTooLow = 0x85,
+        TemperatureTooHigh = 0x86,
+        TemperatureTooLow = 0x87,
+        VehicleSpeedTooHigh = 0x88,
+        VehicleSpeedTooLow = 0x89,
+        ThrottleOrPedalTooHigh = 0x8A,
+        ThrottleOrPedalTooLow = 0x8B,
+        TransmissionRangeNotInNeutral = 0x8C,
+        TransmissionRangeNotInGear = 0x8D,
+        BrakeSwitchOrSwitchesNotClosed = 0x8F,
+        ShifterLeverNotInPark = 0x90,
+        TorqueConvertClutchLocked = 0x91,
+        VoltageTooHigh = 0x92,
+        VoltageTooLow = 0x93,
+        VehicleManufacturerSpecific(VehicleManufacturerSpecificCNC),
+    }
+
+    impl NegativeResponseCode {
+        pub fn from(cnc: VehicleManufacturerSpecificCNC) -> Self {
+            Self::VehicleManufacturerSpecific(cnc)
+        }
+    }
+
+    /// cf. ISO 14229-1:2020, Table A.1 (vehicleManufacturerSpecificConditionsNotCorrect)
+    /// Valid NRC range: 0xF0..0xFE
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct VehicleManufacturerSpecificCNC(u8);
+
+    impl From<u8> for VehicleManufacturerSpecificCNC {
+        fn from(value: u8) -> Self> {
+            match value {
+                0xF0..=0xFE => Self(value),
+                _ => panic!("Provided value for uds::VehicleManufacturerSpecificCNC is out of permitted range 0xF0..0xFE: {:#04X}", value),
+            }
+        }
+    }
+
+    impl From<VehicleManufacturerSpecificCNC> for u8 {
+        fn from(cnc: VehicleManufacturerSpecificCNC) -> Self {
+            cnc.0
+        }
     }
 }
 
@@ -557,6 +642,87 @@ mod tests {
             cloned.error.as_ref().unwrap().message_text,
             data_err.error.as_ref().unwrap().message_text
         );
+    }
+
+    // ── uds::VehicleManufacturerSpecificCNC ───────────────────────────
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_from_u8_lower_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF0);
+        assert_eq!(u8::from(cnc), 0xF0);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_from_u8_upper_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xFE);
+        assert_eq!(u8::from(cnc), 0xFE);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_from_u8_mid_range() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF5);
+        assert_eq!(u8::from(cnc), 0xF5);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of permitted range")]
+    fn vehicle_manufacturer_specific_cnc_from_u8_below_range() {
+        let _ = uds::VehicleManufacturerSpecificCNC::from(0xEF);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of permitted range")]
+    fn vehicle_manufacturer_specific_cnc_from_u8_above_range() {
+        let _ = uds::VehicleManufacturerSpecificCNC::from(0xFF);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of permitted range")]
+    fn vehicle_manufacturer_specific_cnc_from_u8_zero() {
+        let _ = uds::VehicleManufacturerSpecificCNC::from(0x00);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_clone() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF3);
+        let cloned = cnc.clone();
+        assert_eq!(cnc, cloned);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_roundtrip() {
+        for val in 0xF0..=0xFE {
+            let cnc = uds::VehicleManufacturerSpecificCNC::from(val);
+            assert_eq!(u8::from(cnc), val);
+        }
+    }
+
+    // ── uds::NegativeResponseCode::from (VehicleManufacturerSpecific) ─
+
+    #[test]
+    fn negative_response_code_from_vehicle_manufacturer_specific() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF0);
+        let nrc = uds::NegativeResponseCode::from(cnc.clone());
+        assert_eq!(
+            nrc,
+            uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc)
+        );
+    }
+
+    #[test]
+    fn error_from_nrc_vehicle_manufacturer_specific() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF2);
+        let nrc = uds::NegativeResponseCode::from(cnc);
+        let err = Error::from_nrc(nrc);
+        match &err.code {
+            ErrorCode::UDS(uds::NegativeResponseCode::VehicleManufacturerSpecific(inner)) => {
+                assert_eq!(u8::from(inner.clone()), 0xF2);
+            }
+            _ => {
+                panic!("expected UDS VehicleManufacturerSpecific error code");
+            }
+        }
+        assert!(err.payload.is_none());
     }
 
     // ── RequestMessagePayload ─────────────────────────────────────────
