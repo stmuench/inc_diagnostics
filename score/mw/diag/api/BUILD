@@ -29,6 +29,8 @@ rust_library(
         ":data_resource",
         ":operation",
         ":simple_operation",
+        ":uds",
+        ":uds_adapters",
     ],
 )
 
@@ -95,4 +97,27 @@ rust_test(
     deps = [
         "@score_crate_index//:tokio",
     ],
+)
+
+rust_library(
+    name = "uds",
+    srcs = ["uds.rs"],
+    deps = [
+        ":common",
+    ],
+)
+
+rust_library(
+    name = "uds_adapters",
+    srcs = ["uds_adapters.rs"],
+    deps = [
+        ":common",
+        ":data_resource",
+        ":uds",
+    ],
+)
+
+rust_test(
+    name = "uds_adapters_test",
+    crate = ":uds_adapters",
 )
