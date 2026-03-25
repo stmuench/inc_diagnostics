@@ -114,10 +114,7 @@ rust_library(
     deps = [
         ":common",
         ":data_resource",
-        ":operation",
-        ":simple_operation",
         ":uds",
-        "@score_crate_index//:tokio",
     ],
 )
 
