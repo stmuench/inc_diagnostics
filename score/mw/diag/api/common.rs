@@ -144,8 +144,163 @@ pub mod uds {
 
     /// cf. ISO 14229-1:2020, Table A.1
     #[derive(Clone, Debug, PartialEq)]
+    #[repr(u8)]
     pub enum NegativeResponseCode {
-        // TO BE ADDED
+        GeneralReject = 0x10,
+        ServiceNotSupported = 0x11,
+        SubFunctionNotSupported = 0x12,
+        IncorrectMessageLengthOrInvalidFormat = 0x13,
+        ResponseTooLong = 0x14,
+        BusyRepeatRequest = 0x21,
+        ConditionsNotCorrect = 0x22,
+        NoResponseFromSubnetComponent = 0x23,
+        RequestSequenceError = 0x24,
+        NoResponseFromSubNetComponent = 0x25,
+        FailurePreventsExecutionOfRequestedAction = 0x26,
+        RequestOutOfRange = 0x31,
+        SecurityAccessDenied = 0x33,
+        AuthenticationRequired = 0x34,
+        InvalidKey = 0x35,
+        ExceededNumberOfAttempts = 0x36,
+        RequiredTimeDelayNotExpired = 0x37,
+        SecureDataTransmissionRequired = 0x38,
+        SecureDataTransmissionNotAllowed = 0x39,
+        SecureDataVerificationFailed = 0x3A,
+        CertificateVerificationFailedInvalidTimePeriod = 0x50,
+        CertificateVerificationFailedInvalidSignature = 0x51,
+        CertificateVerificationFailedInvalidChainOfTrust = 0x52,
+        CertificateVerificationFailedInvalidType = 0x53,
+        CertificateVerificationFailedInvalidFormat = 0x54,
+        CertificateVerificationFailedInvalidContent = 0x55,
+        CertificateVerificationFailedInvalidScope = 0x56,
+        CertificateVerificationFailedInvalidCertificate = 0x57,
+        OwnershipVerificationFailed = 0x58,
+        ChallengeCalculationFailed = 0x59,
+        SettingAccessRightsFailed = 0x5A,
+        SessionKeyCreationOrDerivationFailed = 0x5B,
+        ConfigurationDataUsageFailed = 0x5C,
+        DeAuthenticationFailed = 0x5D,
+        UploadDownloadNotAccepted = 0x70,
+        TransferDataSuspended = 0x71,
+        GeneralProgrammingFailure = 0x72,
+        WrongBlockSequenceCounter = 0x73,
+        RequestCorrectlyReceivedResponsePending = 0x78,
+        SubFunctionNotSupportedInActiveSession = 0x7E,
+        ServiceNotSupportedInActiveSession = 0x7F,
+        RpmTooHigh = 0x81,
+        RpmTooLow = 0x82,
+        EngineIsRunning = 0x83,
+        EngineIsNotRunning = 0x84,
+        EngineRunTimeTooLow = 0x85,
+        TemperatureTooHigh = 0x86,
+        TemperatureTooLow = 0x87,
+        VehicleSpeedTooHigh = 0x88,
+        VehicleSpeedTooLow = 0x89,
+        ThrottleOrPedalTooHigh = 0x8A,
+        ThrottleOrPedalTooLow = 0x8B,
+        TransmissionRangeNotInNeutral = 0x8C,
+        TransmissionRangeNotInGear = 0x8D,
+        BrakeSwitchOrSwitchesNotClosed = 0x8F,
+        ShifterLeverNotInPark = 0x90,
+        TorqueConverterClutchLocked = 0x91,
+        VoltageTooHigh = 0x92,
+        VoltageTooLow = 0x93,
+        ResourceTemporarilyNotAvailable = 0x94,
+        VehicleManufacturerSpecific(VehicleManufacturerSpecificCNC),
+    }
+
+    impl NegativeResponseCode {
+        pub fn from(cnc: VehicleManufacturerSpecificCNC) -> Self {
+            Self::VehicleManufacturerSpecific(cnc)
+        }
+    }
+
+    impl From<NegativeResponseCode> for u8 {
+        fn from(nrc: NegativeResponseCode) -> Self {
+            match nrc {
+                NegativeResponseCode::GeneralReject => 0x10,
+                NegativeResponseCode::ServiceNotSupported => 0x11,
+                NegativeResponseCode::SubFunctionNotSupported => 0x12,
+                NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat => 0x13,
+                NegativeResponseCode::ResponseTooLong => 0x14,
+                NegativeResponseCode::BusyRepeatRequest => 0x21,
+                NegativeResponseCode::ConditionsNotCorrect => 0x22,
+                NegativeResponseCode::NoResponseFromSubnetComponent => 0x23,
+                NegativeResponseCode::RequestSequenceError => 0x24,
+                NegativeResponseCode::NoResponseFromSubNetComponent => 0x25,
+                NegativeResponseCode::FailurePreventsExecutionOfRequestedAction => 0x26,
+                NegativeResponseCode::RequestOutOfRange => 0x31,
+                NegativeResponseCode::SecurityAccessDenied => 0x33,
+                NegativeResponseCode::AuthenticationRequired => 0x34,
+                NegativeResponseCode::InvalidKey => 0x35,
+                NegativeResponseCode::ExceededNumberOfAttempts => 0x36,
+                NegativeResponseCode::RequiredTimeDelayNotExpired => 0x37,
+                NegativeResponseCode::SecureDataTransmissionRequired => 0x38,
+                NegativeResponseCode::SecureDataTransmissionNotAllowed => 0x39,
+                NegativeResponseCode::SecureDataVerificationFailed => 0x3A,
+                NegativeResponseCode::CertificateVerificationFailedInvalidTimePeriod => 0x50,
+                NegativeResponseCode::CertificateVerificationFailedInvalidSignature => 0x51,
+                NegativeResponseCode::CertificateVerificationFailedInvalidChainOfTrust => 0x52,
+                NegativeResponseCode::CertificateVerificationFailedInvalidType => 0x53,
+                NegativeResponseCode::CertificateVerificationFailedInvalidFormat => 0x54,
+                NegativeResponseCode::CertificateVerificationFailedInvalidContent => 0x55,
+                NegativeResponseCode::CertificateVerificationFailedInvalidScope => 0x56,
+                NegativeResponseCode::CertificateVerificationFailedInvalidCertificate => 0x57,
+                NegativeResponseCode::OwnershipVerificationFailed => 0x58,
+                NegativeResponseCode::ChallengeCalculationFailed => 0x59,
+                NegativeResponseCode::SettingAccessRightsFailed => 0x5A,
+                NegativeResponseCode::SessionKeyCreationOrDerivationFailed => 0x5B,
+                NegativeResponseCode::ConfigurationDataUsageFailed => 0x5C,
+                NegativeResponseCode::DeAuthenticationFailed => 0x5D,
+                NegativeResponseCode::UploadDownloadNotAccepted => 0x70,
+                NegativeResponseCode::TransferDataSuspended => 0x71,
+                NegativeResponseCode::GeneralProgrammingFailure => 0x72,
+                NegativeResponseCode::WrongBlockSequenceCounter => 0x73,
+                NegativeResponseCode::RequestCorrectlyReceivedResponsePending => 0x78,
+                NegativeResponseCode::SubFunctionNotSupportedInActiveSession => 0x7E,
+                NegativeResponseCode::ServiceNotSupportedInActiveSession => 0x7F,
+                NegativeResponseCode::RpmTooHigh => 0x81,
+                NegativeResponseCode::RpmTooLow => 0x82,
+                NegativeResponseCode::EngineIsRunning => 0x83,
+                NegativeResponseCode::EngineIsNotRunning => 0x84,
+                NegativeResponseCode::EngineRunTimeTooLow => 0x85,
+                NegativeResponseCode::TemperatureTooHigh => 0x86,
+                NegativeResponseCode::TemperatureTooLow => 0x87,
+                NegativeResponseCode::VehicleSpeedTooHigh => 0x88,
+                NegativeResponseCode::VehicleSpeedTooLow => 0x89,
+                NegativeResponseCode::ThrottleOrPedalTooHigh => 0x8A,
+                NegativeResponseCode::ThrottleOrPedalTooLow => 0x8B,
+                NegativeResponseCode::TransmissionRangeNotInNeutral => 0x8C,
+                NegativeResponseCode::TransmissionRangeNotInGear => 0x8D,
+                NegativeResponseCode::BrakeSwitchOrSwitchesNotClosed => 0x8F,
+                NegativeResponseCode::ShifterLeverNotInPark => 0x90,
+                NegativeResponseCode::TorqueConverterClutchLocked => 0x91,
+                NegativeResponseCode::VoltageTooHigh => 0x92,
+                NegativeResponseCode::VoltageTooLow => 0x93,
+                NegativeResponseCode::ResourceTemporarilyNotAvailable => 0x94,
+                NegativeResponseCode::VehicleManufacturerSpecific(cnc) => cnc.into(),
+            }
+        }
+    }
+
+    /// cf. ISO 14229-1:2020, Table A.1 (vehicleManufacturerSpecificConditionsNotCorrect)
+    /// Valid NRC range: 0xF0..0xFE
+    #[derive(Clone, Debug, PartialEq)]
+    pub struct VehicleManufacturerSpecificCNC(u8);
+
+    impl From<u8> for VehicleManufacturerSpecificCNC {
+        fn from(value: u8) -> Self {
+            match value {
+                0xF0..=0xFE => Self(value),
+                _ => panic!("Provided value for uds::VehicleManufacturerSpecificCNC is out of permitted range 0xF0..0xFE: {:#04X}", value),
+            }
+        }
+    }
+
+    impl From<VehicleManufacturerSpecificCNC> for u8 {
+        fn from(cnc: VehicleManufacturerSpecificCNC) -> Self {
+            cnc.0
+        }
     }
 }
 
@@ -402,11 +557,9 @@ mod tests {
 
     #[test]
     fn generic_error_from_code_with_translation() {
-        let err = sovd::GenericError::from_code(
-            sovd::ErrorCode::IncompleteRequest,
-            "msg".to_string(),
-        )
-        .with_translation_id("trans_id".to_string());
+        let err =
+            sovd::GenericError::from_code(sovd::ErrorCode::IncompleteRequest, "msg".to_string())
+                .with_translation_id("trans_id".to_string());
         assert_eq!(err.sovd_error, "incomplete-request");
         assert_eq!(err.message_text, "msg");
         assert!(err.vendor_error.is_none());
@@ -577,6 +730,515 @@ mod tests {
             data_err.error.as_ref().unwrap().sovd_error,
             "invalid-signature"
         );
+    }
+
+    // ── uds::VehicleManufacturerSpecificCNC ───────────────────────────
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_from_u8_lower_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF0);
+        assert_eq!(u8::from(cnc), 0xF0);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_from_u8_upper_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xFE);
+        assert_eq!(u8::from(cnc), 0xFE);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_from_u8_mid_range() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF5);
+        assert_eq!(u8::from(cnc), 0xF5);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of permitted range")]
+    fn vehicle_manufacturer_specific_cnc_from_u8_below_range() {
+        let _ = uds::VehicleManufacturerSpecificCNC::from(0xEF);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of permitted range")]
+    fn vehicle_manufacturer_specific_cnc_from_u8_above_range() {
+        let _ = uds::VehicleManufacturerSpecificCNC::from(0xFF);
+    }
+
+    #[test]
+    #[should_panic(expected = "out of permitted range")]
+    fn vehicle_manufacturer_specific_cnc_from_u8_zero() {
+        let _ = uds::VehicleManufacturerSpecificCNC::from(0x00);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_clone() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF3);
+        let cloned = cnc.clone();
+        assert_eq!(cnc, cloned);
+    }
+
+    #[test]
+    fn vehicle_manufacturer_specific_cnc_roundtrip() {
+        for val in 0xF0..=0xFE {
+            let cnc = uds::VehicleManufacturerSpecificCNC::from(val);
+            assert_eq!(u8::from(cnc), val);
+        }
+    }
+
+    // ── uds::NegativeResponseCode::from (VehicleManufacturerSpecific) ─
+
+    #[test]
+    fn negative_response_code_from_vehicle_manufacturer_specific() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF0);
+        let nrc = uds::NegativeResponseCode::from(cnc.clone());
+        assert_eq!(
+            nrc,
+            uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc)
+        );
+    }
+
+    #[test]
+    fn error_from_nrc_vehicle_manufacturer_specific() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF2);
+        let nrc = uds::NegativeResponseCode::from(cnc);
+        let err = Error::from_nrc(nrc);
+        match &err.code {
+            ErrorCode::UDS(uds::NegativeResponseCode::VehicleManufacturerSpecific(inner)) => {
+                assert_eq!(u8::from(inner.clone()), 0xF2);
+            }
+            _ => {
+                panic!("expected UDS VehicleManufacturerSpecific error code");
+            }
+        }
+        assert!(err.payload.is_none());
+    }
+
+    // ── uds::NegativeResponseCode → u8 conversion ──────────────────────
+
+    #[test]
+    fn nrc_to_u8_general_reject() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::GeneralReject), 0x10);
+    }
+
+    #[test]
+    fn nrc_to_u8_service_not_supported() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ServiceNotSupported), 0x11);
+    }
+
+    #[test]
+    fn nrc_to_u8_sub_function_not_supported() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::SubFunctionNotSupported), 0x12);
+    }
+
+    #[test]
+    fn nrc_to_u8_incorrect_message_length_or_invalid_format() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
+            0x13
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_response_too_long() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ResponseTooLong), 0x14);
+    }
+
+    #[test]
+    fn nrc_to_u8_busy_repeat_request() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::BusyRepeatRequest), 0x21);
+    }
+
+    #[test]
+    fn nrc_to_u8_conditions_not_correct() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ConditionsNotCorrect), 0x22);
+    }
+
+    #[test]
+    fn nrc_to_u8_no_response_from_subnet_component() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::NoResponseFromSubnetComponent),
+            0x23
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_request_sequence_error() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RequestSequenceError), 0x24);
+    }
+
+    #[test]
+    fn nrc_to_u8_no_response_from_sub_net_component() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::NoResponseFromSubNetComponent),
+            0x25
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_failure_prevents_execution() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::FailurePreventsExecutionOfRequestedAction),
+            0x26
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_request_out_of_range() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RequestOutOfRange), 0x31);
+    }
+
+    #[test]
+    fn nrc_to_u8_security_access_denied() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::SecurityAccessDenied), 0x33);
+    }
+
+    #[test]
+    fn nrc_to_u8_authentication_required() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::AuthenticationRequired), 0x34);
+    }
+
+    #[test]
+    fn nrc_to_u8_invalid_key() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::InvalidKey), 0x35);
+    }
+
+    #[test]
+    fn nrc_to_u8_exceeded_number_of_attempts() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ExceededNumberOfAttempts), 0x36);
+    }
+
+    #[test]
+    fn nrc_to_u8_required_time_delay_not_expired() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::RequiredTimeDelayNotExpired),
+            0x37
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_secure_data_transmission_required() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SecureDataTransmissionRequired),
+            0x38
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_secure_data_transmission_not_allowed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SecureDataTransmissionNotAllowed),
+            0x39
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_secure_data_verification_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SecureDataVerificationFailed),
+            0x3A
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_time_period() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidTimePeriod),
+            0x50
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_signature() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidSignature),
+            0x51
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_chain_of_trust() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidChainOfTrust),
+            0x52
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_type() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidType),
+            0x53
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_format() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidFormat),
+            0x54
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_content() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidContent),
+            0x55
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_scope() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidScope),
+            0x56
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_certificate() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidCertificate),
+            0x57
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_ownership_verification_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::OwnershipVerificationFailed),
+            0x58
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_challenge_calculation_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ChallengeCalculationFailed),
+            0x59
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_setting_access_rights_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SettingAccessRightsFailed),
+            0x5A
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_session_key_creation_or_derivation_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SessionKeyCreationOrDerivationFailed),
+            0x5B
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_configuration_data_usage_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ConfigurationDataUsageFailed),
+            0x5C
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_de_authentication_failed() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::DeAuthenticationFailed), 0x5D);
+    }
+
+    #[test]
+    fn nrc_to_u8_upload_download_not_accepted() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::UploadDownloadNotAccepted),
+            0x70
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_transfer_data_suspended() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::TransferDataSuspended), 0x71);
+    }
+
+    #[test]
+    fn nrc_to_u8_general_programming_failure() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::GeneralProgrammingFailure),
+            0x72
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_wrong_block_sequence_counter() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::WrongBlockSequenceCounter),
+            0x73
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_request_correctly_received_response_pending() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::RequestCorrectlyReceivedResponsePending),
+            0x78
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_sub_function_not_supported_in_active_session() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SubFunctionNotSupportedInActiveSession),
+            0x7E
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_service_not_supported_in_active_session() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ServiceNotSupportedInActiveSession),
+            0x7F
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_rpm_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RpmTooHigh), 0x81);
+    }
+
+    #[test]
+    fn nrc_to_u8_rpm_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RpmTooLow), 0x82);
+    }
+
+    #[test]
+    fn nrc_to_u8_engine_is_running() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::EngineIsRunning), 0x83);
+    }
+
+    #[test]
+    fn nrc_to_u8_engine_is_not_running() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::EngineIsNotRunning), 0x84);
+    }
+
+    #[test]
+    fn nrc_to_u8_engine_run_time_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::EngineRunTimeTooLow), 0x85);
+    }
+
+    #[test]
+    fn nrc_to_u8_temperature_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::TemperatureTooHigh), 0x86);
+    }
+
+    #[test]
+    fn nrc_to_u8_temperature_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::TemperatureTooLow), 0x87);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_speed_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VehicleSpeedTooHigh), 0x88);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_speed_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VehicleSpeedTooLow), 0x89);
+    }
+
+    #[test]
+    fn nrc_to_u8_throttle_or_pedal_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ThrottleOrPedalTooHigh), 0x8A);
+    }
+
+    #[test]
+    fn nrc_to_u8_throttle_or_pedal_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ThrottleOrPedalTooLow), 0x8B);
+    }
+
+    #[test]
+    fn nrc_to_u8_transmission_range_not_in_neutral() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::TransmissionRangeNotInNeutral),
+            0x8C
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_transmission_range_not_in_gear() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::TransmissionRangeNotInGear),
+            0x8D
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_brake_switch_or_switches_not_closed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::BrakeSwitchOrSwitchesNotClosed),
+            0x8F
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_shifter_lever_not_in_park() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ShifterLeverNotInPark), 0x90);
+    }
+
+    #[test]
+    fn nrc_to_u8_torque_converter_clutch_locked() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::TorqueConverterClutchLocked),
+            0x91
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_voltage_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VoltageTooHigh), 0x92);
+    }
+
+    #[test]
+    fn nrc_to_u8_voltage_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VoltageTooLow), 0x93);
+    }
+
+    #[test]
+    fn nrc_to_u8_resource_temporarily_not_available() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ResourceTemporarilyNotAvailable),
+            0x94
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_lower_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF0);
+        let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+        assert_eq!(u8::from(nrc), 0xF0);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_upper_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xFE);
+        let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+        assert_eq!(u8::from(nrc), 0xFE);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_mid_range() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF7);
+        let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+        assert_eq!(u8::from(nrc), 0xF7);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_roundtrip_all() {
+        for val in 0xF0..=0xFE {
+            let cnc = uds::VehicleManufacturerSpecificCNC::from(val);
+            let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+            assert_eq!(u8::from(nrc), val);
+        }
     }
 
     // ── RequestMessagePayload ─────────────────────────────────────────
