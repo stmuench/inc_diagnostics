@@ -14,6 +14,8 @@
 use common::Result as DiagResult;
 use common::*;
 use data_resource::{DataResource, ReadValueArgs, ReadValueReply, WriteValueArgs};
+use operation::{ExecuteArguments, ExecutionHandle};
+use simple_operation::SimpleOperation;
 
 /// UDS (Unified Diagnostic Services) data resource adapters.
 ///
@@ -91,6 +93,78 @@ impl DataResource for DataResourceAdapter {
                 }
             }
         }
+    }
+}
+
+/// UDS (Unified Diagnostic Services) routine control adapter.
+///
+/// Bridges UDS RoutineControl (cf. ISO 14229-1:2020, Service 0x31)
+/// to the [`SimpleOperation`](super::SimpleOperation) API.
+pub struct RoutineControlAdapter {
+    routine_control: Box<dyn ::uds::RoutineControl + Send>,
+}
+
+impl RoutineControlAdapter {
+    #[must_use]
+    pub fn from(instance: impl ::uds::RoutineControl + Send + 'static) -> Self {
+        Self {
+            routine_control: Box::new(instance),
+        }
+    }
+}
+
+impl SimpleOperation for RoutineControlAdapter {
+    fn start(&mut self, input: ExecuteArguments) -> DiagResult<ExecutionHandle> {
+        let byte_input = match input.user_parameters {
+            Some(RequestMessagePayload::Binary(data)) => Some(data),
+            None => None,
+            _ => {
+                return Err(Error::from_error(sovd::GenericError::from_code(
+                    sovd::ErrorCode::PreconditionNotFulfilled,
+                    "UDS RoutineControl only supports binary encoding for its input!".to_string(),
+                )))
+            }
+        };
+        let start_routine = self.routine_control.start(byte_input.as_deref())?;
+
+        Ok(ExecutionHandle {
+            future: Box::pin(async move {
+                match start_routine.future.await {
+                    Ok(Some(bytes)) => Ok(DiagnosticReply {
+                        message_payload: Some(ReplyMessagePayload::from_byte_vector(bytes)),
+                        additional_attrs: None,
+                    }),
+                    Ok(None) => Ok(DiagnosticReply::default()),
+                    Err(err) => Err(err),
+                }
+            }),
+            reply: start_routine.reply.map(|bytes| DiagnosticReply {
+                message_payload: Some(ReplyMessagePayload::from_byte_vector(bytes)),
+                additional_attrs: None,
+            }),
+        })
+    }
+
+    fn stop(&mut self, input: Option<ExecuteArguments>) -> DiagResult<Option<DiagnosticReply>> {
+        let byte_input = match input.map(|args| args.user_parameters) {
+            Some(Some(RequestMessagePayload::Binary(data))) => Some(data),
+            Some(None) | None => None,
+            _ => {
+                return Err(Error::from_error(sovd::GenericError::from_code(
+                    sovd::ErrorCode::PreconditionNotFulfilled,
+                    "UDS RoutineControl only supports binary encoding for its input!".to_string(),
+                )))
+            }
+        };
+        let result = self.routine_control.stop(byte_input.as_deref())?;
+        Ok(result.map(|bytes| DiagnosticReply {
+            message_payload: Some(ReplyMessagePayload::from_byte_vector(bytes)),
+            additional_attrs: None,
+        }))
+    }
+
+    fn completion_percentage(&self) -> Option<u8> {
+        self.routine_control.completion_percentage()
     }
 }
 
@@ -279,4 +353,6 @@ mod tests {
             _ => panic!("expected SOVD error code"),
         }
     }
+
+    // TODO: add comprehensive unit tests for RoutineControlAdapter!
 }
