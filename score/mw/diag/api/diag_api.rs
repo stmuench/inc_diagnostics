@@ -21,6 +21,12 @@ pub type Result<T> = ::common::Result<T>;
 pub type ErrorCode = ::common::ErrorCode;
 pub type Error = ::common::Error;
 
+pub mod uds {
+    pub use common::uds::*;
+    pub use uds::*;
+    pub use uds_adapters::*;
+}
+
 pub mod sovd {
     pub use common::sovd::*;
 
