@@ -11,7 +11,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # *******************************************************************************
 
-load("@rules_rust//rust:defs.bzl", "rust_library")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 alias(
     name = "api",
@@ -39,6 +39,11 @@ rust_library(
         "@crate_index//:indexmap",
         "@crate_index//:serde_json",
     ],
+)
+
+rust_test(
+    name = "common_test",
+    crate = ":common",
 )
 
 rust_library(
