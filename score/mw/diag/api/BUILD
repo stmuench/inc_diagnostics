@@ -55,6 +55,11 @@ rust_library(
     ],
 )
 
+rust_test(
+    name = "data_resource_test",
+    crate = ":data_resource",
+)
+
 rust_library(
     name = "operation",
     srcs = ["operation.rs"],
