@@ -76,15 +76,7 @@ impl ExecutionStatusDetails {
     #[must_use]
     pub fn new(event_kind: ExecutionEventKind) -> Self {
         Self {
-            last_executed_capability: match event_kind {
-                // cf. ISO 17978-3:2025 Section 7.14.5, Table 178
-                ExecutionEventKind::HandleCustomCapability(capability) => capability,
-                ExecutionEventKind::ReportStatus => panic!("illegitimate capability"),
-                ExecutionEventKind::Interrupt => "freeze".to_string(),
-                ExecutionEventKind::Reset => "reset".to_string(),
-                ExecutionEventKind::Stop => "stop".to_string(),
-                _ => "execute".to_string(),
-            },
+            last_executed_capability: event_kind.to_string(),
             completion_percentage: None,
             event_result: None,
             exec_errors: None,
@@ -150,6 +142,20 @@ pub enum ExecutionEventKind {
     Resume,
     Reset,
     Stop,
+}
+
+impl std::fmt::Display for ExecutionEventKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ExecutionEventKind::HandleCustomCapability(cap) => write!(f, "{cap}"),
+            ExecutionEventKind::ReportStatus => write!(f, "status"),
+            ExecutionEventKind::ControlGone => write!(f, "unknown"),
+            ExecutionEventKind::Interrupt => write!(f, "freeze"),
+            ExecutionEventKind::Resume => write!(f, "execute"),
+            ExecutionEventKind::Reset => write!(f, "reset"),
+            ExecutionEventKind::Stop => write!(f, "stop"),
+        }
+    }
 }
 
 /// Events delivered to an operation's execution control loop.
