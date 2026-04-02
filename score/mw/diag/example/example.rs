@@ -1,15 +1,15 @@
-/********************************************************************************
- * Copyright (c) 2026 Contributors to the Eclipse Foundation
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Apache License Version 2.0 which is available at
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
- ********************************************************************************/
+// *******************************************************************************
+// Copyright (c) 2026 Contributors to the Eclipse Foundation
+//
+// See the NOTICE file(s) distributed with this work for additional
+// information regarding copyright ownership.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Apache License Version 2.0 which is available at
+// <https://www.apache.org/licenses/LICENSE-2.0>
+//
+// SPDX-License-Identifier: Apache-2.0
+// *******************************************************************************
 
 use diag_api::sovd::data_resource::*;
 use diag_api::sovd::operation::*;
@@ -197,6 +197,91 @@ impl Operation for MyAsyncOperation {
     }
 }
 
+/*************************************************************/
+/* Builder Pattern Examples with DiagnosticServices Builders */
+/*************************************************************/
+
+/// Example implementation of a vehicle entity for diagnostic services registration
+struct VehicleEntity {
+    vin: String,
+    make: String,
+    model: String,
+}
+
+impl VehicleEntity {
+    fn new(vin: &str, make: &str, model: &str) -> Self {
+        Self {
+            vin: vin.to_string(),
+            make: make.to_string(),
+            model: model.to_string(),
+        }
+    }
+}
+
+impl sovd::DiagnosticEntity for VehicleEntity {
+    fn entity_id(&self) -> &str {
+        &self.vin
+    }
+}
+
+/// Read-only data resource for vehicle identification
+struct VehicleIdentificationResource {
+    vin: String,
+    make: String,
+    model: String,
+}
+
+impl ReadOnlyDataResource for VehicleIdentificationResource {
+    fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
+        let json_data = serde_json::json!({
+            "vin": self.vin,
+            "make": self.make,
+            "model": self.model,
+        });
+        ReadValueHandle::ready(ReadValueReply {
+            data: ReplyMessagePayload::JSON(json_data, None),
+            errors: None,
+        })
+    }
+}
+
+/// Read-write data resource for vehicle diagnostic state
+struct VehicleDiagnosticStateResource {
+    state: Arc<Mutex<String>>,
+}
+
+impl DataResource for VehicleDiagnosticStateResource {
+    fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
+        match self.state.lock() {
+            Ok(state) => ReadValueHandle::ready(ReadValueReply {
+                data: ReplyMessagePayload::UTF8(state.clone()),
+                errors: None,
+            }),
+            Err(_) => ReadValueHandle::from_error(diag_api::Error::mutex_poisoned()),
+        }
+    }
+}
+
+/// Simple synchronous operation for vehicle diagnostics
+struct VehicleDiagnosticOperation;
+
+impl Operation for VehicleDiagnosticOperation {
+    fn execute(
+        &mut self,
+        _input: ExecuteArguments,
+        _control: ExecutionControl,
+    ) -> DiagResult<ExecutionHandle> {
+        Ok(ExecutionHandle::from_closure(|| {
+            ExecutionResult::Ok(DiagnosticReply {
+                message_payload: Some(ReplyMessagePayload::UTF8(
+                    "Vehicle diagnostics completed successfully".to_string(),
+                )),
+                additional_attrs: None,
+            })
+        }))
+    }
+}
+
 /**********************/
 /* execute operations */
 /**********************/
@@ -211,6 +296,302 @@ mod tests {
     const DATA_RESOURCE_ID: &str = "my_data_resource";
     const UDS_DATA_RESOURCE_ID: &str = "uds_data_resource";
     const UDS_ROUTINE_OP_ID: &str = "my_uds_routine_op";
+
+    /********************************************************************/
+    /* Builder Pattern Demonstration Tests                              */
+    /********************************************************************/
+
+    /// Integration test: Complete builder → collection → registrar flow
+    #[test]
+    fn test_builder_pattern_complete_integration_flow() {
+        let vehicle = VehicleEntity::new("INTEGRATION_VIN", "Volvo", "XC60");
+        assert_eq!(vehicle.entity_id(), "INTEGRATION_VIN");
+
+        let collection = sovd::registration::DiagnosticServicesCollectionBuilder::new(vehicle)
+            .with_read_resource(
+                VehicleIdentificationResource {
+                    vin: "INTEGRATION_VIN".to_string(),
+                    make: "Volvo".to_string(),
+                    model: "XC60".to_string(),
+                },
+                DataResourceMetadata {
+                    id: "vehicle_id".to_string(),
+                    name: "Vehicle Identification".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::IdentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_data_resource(
+                VehicleDiagnosticStateResource {
+                    state: Arc::new(Mutex::new("Ready".to_string())),
+                },
+                DataResourceMetadata {
+                    id: "vehicle_state".to_string(),
+                    name: "Vehicle Diagnostic State".to_string(),
+                    translation_id: None,
+                    read_only: false,
+                    category: DataCategory::CurrentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_operation(
+                "diagnostics_op",
+                VehicleDiagnosticOperation,
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .build()
+            .expect("Failed to build collection");
+
+        assert_eq!(collection.entity().entity_id(), "INTEGRATION_VIN");
+        assert!(collection.read_resources().contains_key("vehicle_id"));
+        assert!(collection.data_resources().contains_key("vehicle_state"));
+        assert!(collection.operations().contains_key("diagnostics_op"));
+
+        // In real code: registrar.register_sovd_services(collection)?;
+        // ServiceRegistrar abstraction prevents direct runtime calls.
+    }
+
+    /// Test 1: SOVD builder with fluent API and multiple service types
+    #[test]
+    fn test_builder_use_services_collection_builder() {
+        let vehicle = VehicleEntity::new("VIN123456", "BMW", "X5");
+
+        let collection = sovd::registration::DiagnosticServicesCollectionBuilder::new(vehicle)
+            .with_read_resource(
+                VehicleIdentificationResource {
+                    vin: "VIN123456".to_string(),
+                    make: "BMW".to_string(),
+                    model: "X5".to_string(),
+                },
+                DataResourceMetadata {
+                    id: "vehicle_id".to_string(),
+                    name: "Vehicle Identification".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::IdentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_data_resource(
+                VehicleDiagnosticStateResource {
+                    state: Arc::new(Mutex::new("Ready".to_string())),
+                },
+                DataResourceMetadata {
+                    id: "vehicle_state".to_string(),
+                    name: "Vehicle Diagnostic State".to_string(),
+                    translation_id: None,
+                    read_only: false,
+                    category: DataCategory::CurrentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_operation(
+                "diagnostics_op",
+                VehicleDiagnosticOperation,
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .build()
+            .expect("Failed to build collection");
+
+        assert_eq!(collection.entity().entity_id(), "VIN123456");
+        assert_eq!(collection.read_resources().len(), 1);
+        assert_eq!(collection.data_resources().len(), 1);
+        assert_eq!(collection.operations().len(), 1);
+    }
+
+    /// Test 2: SOVD builder method chaining with multiple resources
+    #[test]
+    fn test_builder_method_chaining_fluent_api() {
+        let vehicle = VehicleEntity::new("CHAIN123", "Mercedes", "E-Class");
+
+        let collection = sovd::registration::DiagnosticServicesCollectionBuilder::new(vehicle)
+            .with_read_resource(
+                VehicleIdentificationResource {
+                    vin: "CHAIN123".to_string(),
+                    make: "Mercedes".to_string(),
+                    model: "E-Class".to_string(),
+                },
+                DataResourceMetadata {
+                    id: "ident_1".to_string(),
+                    name: "Identity 1".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::IdentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_read_resource(
+                VehicleIdentificationResource {
+                    vin: "CHAIN123".to_string(),
+                    make: "Mercedes".to_string(),
+                    model: "E-Class".to_string(),
+                },
+                DataResourceMetadata {
+                    id: "ident_2".to_string(),
+                    name: "Identity 2".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::IdentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_data_resource(
+                VehicleDiagnosticStateResource {
+                    state: Arc::new(Mutex::new("Active".to_string())),
+                },
+                DataResourceMetadata {
+                    id: "state_current".to_string(),
+                    name: "Current State".to_string(),
+                    translation_id: None,
+                    read_only: false,
+                    category: DataCategory::CurrentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_operation(
+                "op_sync",
+                VehicleDiagnosticOperation,
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .with_operation(
+                "op_diagnostic",
+                VehicleDiagnosticOperation,
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .build()
+            .expect("Failed to build collection");
+
+        assert_eq!(collection.read_resources().len(), 2);
+        assert_eq!(collection.data_resources().len(), 1);
+        assert_eq!(collection.operations().len(), 2);
+    }
+
+    /// Test 3: Verify services are accessible via get_* accessors
+    #[test]
+    fn test_builder_verify_services_registered_correctly() {
+        let vehicle = VehicleEntity::new("VERIFY01", "Audi", "A4");
+
+        let collection = sovd::registration::DiagnosticServicesCollectionBuilder::new(vehicle)
+            .with_read_resource(
+                VehicleIdentificationResource {
+                    vin: "VERIFY01".to_string(),
+                    make: "Audi".to_string(),
+                    model: "A4".to_string(),
+                },
+                DataResourceMetadata {
+                    id: "res_ident".to_string(),
+                    name: "Resource Identity".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::IdentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_data_resource(
+                VehicleDiagnosticStateResource {
+                    state: Arc::new(Mutex::new("Operational".to_string())),
+                },
+                DataResourceMetadata {
+                    id: "res_state".to_string(),
+                    name: "Resource State".to_string(),
+                    translation_id: None,
+                    read_only: false,
+                    category: DataCategory::CurrentData,
+                    groups: None,
+                },
+                serde_json::Value::Null,
+            )
+            .with_operation(
+                "op_verify",
+                VehicleDiagnosticOperation,
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .build()
+            .expect("Failed to build");
+
+        assert_eq!(collection.entity().entity_id(), "VERIFY01");
+        // verify IndexMap metadata maps expose id, name, category
+        assert!(collection.read_resources().contains_key("res_ident"));
+        let (meta, _schema) = &collection.read_resources()["res_ident"];
+        assert_eq!(meta.id, "res_ident");
+        assert_eq!(meta.name, "Resource Identity");
+        assert!(collection.data_resources().contains_key("res_state"));
+        assert!(collection.write_resources().is_empty());
+        assert!(collection.operations().contains_key("op_verify"));
+        let op_meta = &collection.operations()["op_verify"];
+        assert!(!op_meta.proximity_proof_required);
+    }
+
+    /// Test 4: UDS builder without entity - DIDs and routines only
+    #[test]
+    fn test_uds_builder_without_entity() {
+        let collection = uds::UdsServicesCollectionBuilder::new()
+            .with_read_did("F190", MyReadDataByIdentifier {})
+            .with_routine("0301", MyUdsRoutine { completion: Arc::new(Notify::new()) })
+            .build()
+            .expect("Failed to build UDS collection");
+
+        assert!(collection.read_dids().contains("F190"));
+        assert!(collection.routines().contains("0301"));
+        assert_eq!(collection.read_dids().len(), 1);
+        assert_eq!(collection.routines().len(), 1);
+    }
+
+    /// Test 5: UDS builder fluent API with multiple DIDs and routines
+    #[test]
+    fn test_uds_builder_fluent_api_multiple_services() {
+        let collection = uds::UdsServicesCollectionBuilder::new()
+            .with_read_did("F186", MyReadDataByIdentifier {})
+            .with_read_did("F190", MyReadDataByIdentifier {})
+            .with_read_did("F1A0", MyReadDataByIdentifier {})
+            .with_routine("0201", MyUdsRoutine { completion: Arc::new(Notify::new()) })
+            .with_routine("0301", MyUdsRoutine { completion: Arc::new(Notify::new()) })
+            .build()
+            .expect("Failed to build UDS collection");
+
+        assert_eq!(collection.read_dids().len(), 3);
+        assert_eq!(collection.routines().len(), 2);
+        assert!(collection.read_dids().contains("F186"));
+        assert!(collection.read_dids().contains("F190"));
+        assert!(collection.read_dids().contains("F1A0"));
+        assert!(collection.routines().contains("0201"));
+        assert!(collection.routines().contains("0301"));
+    }
 
     fn setup_runtime() -> Runtime {
         let runtime = Runtime::new();

@@ -28,6 +28,7 @@ rust_library(
         ":common",
         ":data_resource",
         ":operation",
+        ":registration",
         ":simple_operation",
         ":uds",
         ":uds_adapters",
@@ -123,4 +124,14 @@ rust_library(
 rust_test(
     name = "uds_adapters_test",
     crate = ":uds_adapters",
+)
+
+rust_library(
+    name = "registration",
+    srcs = ["registration.rs"],
+    deps = [
+        ":data_resource",
+        ":operation",
+        ":uds",
+    ],
 )

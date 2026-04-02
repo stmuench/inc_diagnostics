@@ -1,15 +1,15 @@
-/********************************************************************************
- * Copyright (c) 2026 Contributors to the Eclipse Foundation
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Apache License Version 2.0 which is available at
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
- ********************************************************************************/
+// *******************************************************************************
+// Copyright (c) 2026 Contributors to the Eclipse Foundation
+//
+// See the NOTICE file(s) distributed with this work for additional
+// information regarding copyright ownership.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Apache License Version 2.0 which is available at
+// <https://www.apache.org/licenses/LICENSE-2.0>
+//
+// SPDX-License-Identifier: Apache-2.0
+// *******************************************************************************
 
 use common::Result as DiagResult;
 use common::{ByteSlice, ByteVector};
@@ -27,6 +27,14 @@ pub trait WriteDataByIdentifier {
     /// Write raw bytes for the data identifier.
     fn write(&mut self, input: ByteSlice) -> DiagResult<()>;
 }
+
+/// UDS DataIdentifier — combined read+write service (cf. ISO 14229-1:2020, Services 0x22/0x2E).
+///
+/// A blanket implementation is provided for any type that implements both
+/// [`ReadDataByIdentifier`] and [`WriteDataByIdentifier`].
+pub trait DataIdentifier: ReadDataByIdentifier + WriteDataByIdentifier {}
+
+impl<T: ReadDataByIdentifier + WriteDataByIdentifier> DataIdentifier for T {}
 
 /// UDS RoutineControl service (cf. ISO 14229-1:2020, Service 0x31).
 /// NOTE: request routine results (sub-function 0x03) will get handled

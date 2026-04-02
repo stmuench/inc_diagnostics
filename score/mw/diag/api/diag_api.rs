@@ -1,15 +1,15 @@
-/********************************************************************************
- * Copyright (c) 2026 Contributors to the Eclipse Foundation
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Apache License Version 2.0 which is available at
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
- ********************************************************************************/
+// *******************************************************************************
+// Copyright (c) 2026 Contributors to the Eclipse Foundation
+//
+// See the NOTICE file(s) distributed with this work for additional
+// information regarding copyright ownership.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Apache License Version 2.0 which is available at
+// <https://www.apache.org/licenses/LICENSE-2.0>
+//
+// SPDX-License-Identifier: Apache-2.0
+// *******************************************************************************
 
 pub type KeyValueAttributes = ::common::KeyValueAttributes;
 pub type ReplyMessageEncoding = ::common::ReplyMessageEncoding;
@@ -17,6 +17,7 @@ pub type ReplyMessagePayload = ::common::ReplyMessagePayload;
 pub type RequestMessagePayload = ::common::RequestMessagePayload;
 pub type DiagnosticReply = ::common::DiagnosticReply;
 pub type ByteVector = ::common::ByteVector;
+pub type JsonSchema = ::common::JsonSchema;
 pub type Result<T> = ::common::Result<T>;
 pub type ErrorCode = ::common::ErrorCode;
 pub type Error = ::common::Error;
@@ -25,6 +26,7 @@ pub mod uds {
     pub use common::uds::*;
     pub use uds::*;
     pub use uds_adapters::*;
+    pub use registration::*;
 }
 
 pub mod sovd {
@@ -43,5 +45,9 @@ pub mod sovd {
     pub mod operation {
         pub use operation::*;
         pub use simple_operation::*;
+    }
+
+    pub mod registration {
+        pub use registration::*;
     }
 }

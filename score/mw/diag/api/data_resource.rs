@@ -1,15 +1,15 @@
-/********************************************************************************
- * Copyright (c) 2026 Contributors to the Eclipse Foundation
- *
- * See the NOTICE file(s) distributed with this work for additional
- * information regarding copyright ownership.
- *
- * This program and the accompanying materials are made available under the
- * terms of the Apache License Version 2.0 which is available at
- * https://www.apache.org/licenses/LICENSE-2.0
- *
- * SPDX-License-Identifier: Apache-2.0
- ********************************************************************************/
+// *******************************************************************************
+// Copyright (c) 2026 Contributors to the Eclipse Foundation
+//
+// See the NOTICE file(s) distributed with this work for additional
+// information regarding copyright ownership.
+//
+// This program and the accompanying materials are made available under the
+// terms of the Apache License Version 2.0 which is available at
+// <https://www.apache.org/licenses/LICENSE-2.0>
+//
+// SPDX-License-Identifier: Apache-2.0
+// *******************************************************************************
 
 use common::sovd::{DataError, GenericError};
 use common::Result as DiagResult;
@@ -199,6 +199,22 @@ impl WriteValueHandle {
 /*************************/
 /* Data Resource API     */
 /*************************/
+
+/// Trait for read-only data resources.
+///
+/// Implement this when your resource only supports reading.
+/// Register with `DiagnosticServicesCollectionBuilder::with_read_resource`.
+pub trait ReadOnlyDataResource {
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle;
+}
+
+/// Trait for write-only data resources.
+///
+/// Implement this when your resource only supports writing.
+/// Register with `DiagnosticServicesCollectionBuilder::with_write_resource`.
+pub trait WritableDataResource {
+    fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle;
+}
 
 /// Trait for a single data resource provider.
 ///
