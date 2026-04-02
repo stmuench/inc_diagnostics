@@ -18,6 +18,7 @@ pub type RequestMessagePayload = ::common::RequestMessagePayload;
 pub type DiagnosticReply = ::common::DiagnosticReply;
 pub type ByteVector = ::common::ByteVector;
 pub type Result<T> = ::common::Result<T>;
+pub type ErrorCode = ::common::ErrorCode;
 pub type Error = ::common::Error;
 
 pub mod sovd {
@@ -31,8 +32,10 @@ pub mod sovd {
     }
 
     pub use operation::Operation; // for users' convenience
+    pub use operation::SimpleOperation; // for users' convenience
 
     pub mod operation {
         pub use operation::*;
+        pub use simple_operation::*;
     }
 }

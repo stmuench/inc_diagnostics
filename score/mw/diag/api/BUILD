@@ -28,6 +28,7 @@ rust_library(
         ":common",
         ":data_resource",
         ":operation",
+        ":simple_operation",
     ],
 )
 
@@ -56,5 +57,16 @@ rust_library(
         ":common",
         "@crate_index//:futures",
         "@crate_index//:indexmap",
+    ],
+)
+
+rust_library(
+    name = "simple_operation",
+    srcs = ["simple_operation.rs"],
+    deps = [
+        ":common",
+        ":operation",
+        "@crate_index//:futures",
+        "@crate_index//:tokio",
     ],
 )
