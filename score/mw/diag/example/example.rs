@@ -13,13 +13,14 @@
 
 use diag_api::sovd::data_resource::*;
 use diag_api::sovd::operation::*;
-use diag_api::uds::ReadDataByIdentifier;
+use diag_api::uds::{ReadDataByIdentifier, RoutineControl, RoutineControlAdapter, StartRoutine};
 use diag_api::Result as DiagResult;
 use diag_api::*;
 
 use diag_runtime::*;
 
-use tokio::sync::mpsc;
+use std::sync::Arc;
+use tokio::sync::{mpsc, Notify};
 
 /*************************************/
 /* user implementation of a UDS RDBI */
@@ -30,6 +31,32 @@ struct MyReadDataByIdentifier {}
 impl ReadDataByIdentifier for MyReadDataByIdentifier {
     fn read(&self) -> DiagResult<Vec<u8>> {
         Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])
+    }
+}
+
+/********************************************/
+/* user implementation of a UDS routine     */
+/********************************************/
+
+struct MyUdsRoutine {
+    completion: Arc<Notify>,
+}
+
+impl RoutineControl for MyUdsRoutine {
+    fn start(&mut self, _input: Option<&[u8]>) -> DiagResult<StartRoutine> {
+        let completion = self.completion.clone();
+        StartRoutine::from_future(
+            async move {
+                completion.notified().await;
+                Ok(Some(vec![0xCA, 0xFE]))
+            },
+            Some(vec![0xBE, 0xEF]),
+        )
+    }
+
+    fn stop(&mut self, _input: Option<&[u8]>) -> DiagResult<Option<Vec<u8>>> {
+        self.completion.notify_one();
+        Ok(Some(vec![0xDE, 0xAD]))
     }
 }
 
@@ -180,6 +207,7 @@ mod tests {
     const ASYNC_OP_ID: &str = "my_async_op";
     const DATA_RESOURCE_ID: &str = "my_data_resource";
     const UDS_DATA_RESOURCE_ID: &str = "uds_data_resource";
+    const UDS_ROUTINE_OP_ID: &str = "my_uds_routine_op";
 
     fn setup_runtime() -> Runtime {
         let runtime = Runtime::new();
@@ -626,6 +654,108 @@ mod tests {
                         message_payload: Some(ReplyMessagePayload::UTF8(
                             "This was an asynchronous SOVD operation!".to_string(),
                         )),
+                        additional_attrs: None,
+                    })
+                );
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        runtime.shutdown().await;
+        let _ = runtime_join_handle.await;
+
+        println!("DONE");
+    }
+
+    //
+    // trigger execution of an operation which got implemented via the `uds::RoutineControl`
+    // API, attempt to stop it and request its results
+    //
+    #[tokio::test]
+    async fn test_execution_and_query_of_uds_routine() {
+        println!();
+
+        let runtime = setup_runtime();
+        let runtime_join_handle = tokio::spawn(runtime.run());
+
+        // register a UDS RoutineControl-based operation
+        let routine_completion = Arc::new(Notify::new());
+        let entity = runtime.get_or_create_entity(ENTITY_ID.to_string());
+        entity.register_operation(
+            SimpleOperationAdapter::new(RoutineControlAdapter::new(MyUdsRoutine {
+                completion: routine_completion.clone(),
+            })),
+            UDS_ROUTINE_OP_ID.to_string(),
+            OperationMetadata {
+                proximity_proof_required: false,
+                synchronous_execution: false,
+                exclusive_execution: false,
+                supported_modes: None,
+            },
+        );
+
+        // execute the routine
+        let exec_id = match runtime
+            .send(SOVDMessage::ExecuteOperation((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                None,
+            )))
+            .await
+        {
+            SOVDReply::ExecuteOperation(Ok(id)) => id,
+            other => panic!("Unexpected reply: {:?}", other),
+        };
+        println!("UDS routine executed, execution id: {}", exec_id);
+
+        // request current status of the execution (should be `Running`)
+        match runtime
+            .send(SOVDMessage::GetOperationExecutionStatus((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                exec_id.clone(),
+            )))
+            .await
+        {
+            SOVDReply::GetOperationExecutionStatus(Ok(status)) => {
+                assert_eq!(status, ExecutionStatus::Running);
+                println!("Execution status: {:?}", status);
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        // stop the execution
+        match runtime
+            .send(SOVDMessage::StopOperationExecution((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                exec_id.clone(),
+            )))
+            .await
+        {
+            SOVDReply::StopOperationExecution(Ok(())) => {
+                println!("UDS routine execution stopped successfully!");
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        // allow the spawned task to complete after stop
+        tokio::task::yield_now().await;
+
+        // check the execution result
+        match runtime
+            .send(SOVDMessage::GetOperationExecutionResult((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                exec_id.clone(),
+            )))
+            .await
+        {
+            SOVDReply::GetOperationExecutionResult(Ok(exec_result)) => {
+                assert_eq!(
+                    exec_result,
+                    ExecutionResult::Ok(DiagnosticReply {
+                        message_payload: Some(ReplyMessagePayload::Binary(vec![0xCA, 0xFE])),
                         additional_attrs: None,
                     })
                 );
