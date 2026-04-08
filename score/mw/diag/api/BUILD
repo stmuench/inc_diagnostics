@@ -88,3 +88,11 @@ rust_library(
         "@crate_index//:tokio",
     ],
 )
+
+rust_test(
+    name = "simple_operation_test",
+    crate = ":simple_operation",
+    deps = [
+        "@crate_index//:tokio",
+    ],
+)
