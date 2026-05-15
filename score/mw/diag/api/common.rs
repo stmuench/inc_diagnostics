@@ -167,6 +167,7 @@ pub mod sovd {
 pub mod uds {
 
     /// cf. ISO 14229-1:2020, Table A.1
+    #[repr(u8)]
     #[derive(Clone, Debug, PartialEq)]
     pub enum NegativeResponseCode {
         GeneralReject = 0x10,
@@ -243,7 +244,7 @@ pub mod uds {
     pub struct VehicleManufacturerSpecificCNC(u8);
 
     impl From<u8> for VehicleManufacturerSpecificCNC {
-        fn from(value: u8) -> Self> {
+        fn from(value: u8) -> Self {
             match value {
                 0xF0..=0xFE => Self(value),
                 _ => panic!("Provided value for uds::VehicleManufacturerSpecificCNC is out of permitted range 0xF0..0xFE: {:#04X}", value),

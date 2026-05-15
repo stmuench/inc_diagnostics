@@ -18,6 +18,10 @@ use diag_api::sovd::operation::{
     ExecuteArguments, ExecutionControl, ExecutionControlApi, ExecutionEvent, ExecutionEventKind,
     ExecutionResult, ExecutionStatus, Operation, OperationMetadata,
 };
+use diag_api::sovd::app_registration::{
+    AppHeartbeat, AppRegistrar, AppRegistryQuery, DeregisterAppArgs, RegisterAppArgs,
+    RegisterAppReply,
+};
 use diag_api::Error as DiagError;
 use diag_api::Result as DiagResult;
 use diag_api::*;
@@ -39,6 +43,8 @@ pub type ExecutionId = String;
 pub type OperationId = String;
 pub type DataResourceId = String;
 pub type ExecutionTimeout = Duration;
+
+const DEFAULT_REGISTRATION_LEASE_MS: u64 = 30_000;
 
 static EXECUTION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -182,6 +188,11 @@ pub struct Runtime {
     inner: Arc<Mutex<RuntimeImpl>>,
 }
 
+#[derive(Clone, Debug)]
+struct RegisteredApp {
+    endpoint: String,
+}
+
 impl Runtime {
     pub fn new() -> Self {
         Self {
@@ -216,8 +227,62 @@ impl Runtime {
     }
 }
 
+impl AppRegistrar for Runtime {
+    fn register_app(&self, args: RegisterAppArgs) -> BoxFuture<'_, DiagResult<RegisterAppReply>> {
+        async move {
+            self.inner
+                .lock()
+                .map_err(|_| DiagError::mutex_error())?
+                .register_app(args)
+        }
+        .boxed()
+    }
+
+    fn deregister_app(&self, args: DeregisterAppArgs) -> BoxFuture<'_, DiagResult<()>> {
+        async move {
+            self.inner
+                .lock()
+                .map_err(|_| DiagError::mutex_error())?
+                .deregister_app(args)
+        }
+        .boxed()
+    }
+}
+
+impl AppHeartbeat for Runtime {
+    fn heartbeat_app(&self, app_id: String) -> BoxFuture<'_, DiagResult<()>> {
+        async move {
+            let runtime = self.inner.lock().map_err(|_| DiagError::mutex_error())?;
+            if runtime.registrations.contains_key(&app_id) {
+                Ok(())
+            } else {
+                Err(DiagError::from_error(sovd::GenericError::from_code(
+                    sovd::ErrorCode::ErrorResponse,
+                    format!("App with id '{}' is not registered", app_id),
+                )))
+            }
+        }
+        .boxed()
+    }
+}
+
+impl AppRegistryQuery for Runtime {
+    fn resolve_endpoint(&self, app_id: &str) -> BoxFuture<'_, DiagResult<ReplyMessagePayload>> {
+        let app_id = app_id.to_string();
+        async move {
+            self.inner
+                .lock()
+                .map_err(|_| DiagError::mutex_error())?
+                .resolve_endpoint(&app_id)
+        }
+        .boxed()
+    }
+}
+
 struct RuntimeImpl {
     entities: Arc<Mutex<IndexMap<EntityId, Arc<Entity>>>>,
+    registrations: IndexMap<String, RegisteredApp>,
+    registration_counter: u64,
     sovd_sender: mpsc::Sender<(SOVDMessage, oneshot::Sender<SOVDReply>)>,
     sovd_messages: Option<mpsc::Receiver<(SOVDMessage, oneshot::Sender<SOVDReply>)>>,
     request_shutdown: Option<oneshot::Sender<()>>,
@@ -231,6 +296,8 @@ impl RuntimeImpl {
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         RuntimeImpl {
             entities: Arc::new(Mutex::new(IndexMap::<EntityId, Arc<Entity>>::new())),
+            registrations: IndexMap::new(),
+            registration_counter: 0,
             sovd_sender,
             sovd_messages: Some(sovd_receiver),
             request_shutdown: Some(shutdown_sender),
@@ -446,6 +513,65 @@ impl RuntimeImpl {
             .entry(id.clone())
             .or_insert(Arc::new(Entity::new(id)))
             .clone()
+    }
+
+    fn register_app(&mut self, args: RegisterAppArgs) -> DiagResult<RegisterAppReply> {
+        if args.app_id.is_empty() {
+            return Err(DiagError::from_error(sovd::GenericError::from_code(
+                sovd::ErrorCode::IncompleteRequest,
+                "app_id must not be empty".to_string(),
+            )));
+        }
+
+        if args.endpoint.is_empty() {
+            return Err(DiagError::from_error(sovd::GenericError::from_code(
+                sovd::ErrorCode::IncompleteRequest,
+                "endpoint must not be empty".to_string(),
+            )));
+        }
+
+        self.get_or_create_entity(args.app_id.clone());
+
+        self.registrations.insert(
+            args.app_id,
+            RegisteredApp {
+                endpoint: args.endpoint,
+            },
+        );
+
+        self.registration_counter += 1;
+        Ok(RegisterAppReply {
+            registration_id: Some(format!("reg-{}", self.registration_counter)),
+            lease_ms: Some(DEFAULT_REGISTRATION_LEASE_MS),
+        })
+    }
+
+    fn deregister_app(&mut self, args: DeregisterAppArgs) -> DiagResult<()> {
+        if self.registrations.shift_remove(&args.app_id).is_none() {
+            return Err(DiagError::from_error(sovd::GenericError::from_code(
+                sovd::ErrorCode::ErrorResponse,
+                format!("App with id '{}' is not registered", args.app_id),
+            )));
+        }
+
+        self.entities
+            .lock()
+            .map_err(|_| DiagError::mutex_error())?
+            .shift_remove(&args.app_id);
+
+        Ok(())
+    }
+
+    fn resolve_endpoint(&self, app_id: &str) -> DiagResult<ReplyMessagePayload> {
+        self.registrations
+            .get(app_id)
+            .map(|entry| ReplyMessagePayload::UTF8(entry.endpoint.clone()))
+            .ok_or_else(|| {
+                DiagError::from_error(sovd::GenericError::from_code(
+                    sovd::ErrorCode::ErrorResponse,
+                    format!("App with id '{}' is not registered", app_id),
+                ))
+            })
     }
 
     // FIXME: implement unregister_entity(&self, id: EntityId)
@@ -791,6 +917,92 @@ impl OperationHolder {
             info: op_metadata,
             instance: Box::new(op),
             executions: IndexMap::<ExecutionId, ActiveExecution>::new(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn runtime_register_and_resolve_endpoint() {
+        let runtime = Runtime::new();
+
+        let reply = runtime
+            .register_app(RegisterAppArgs {
+                app_id: "APP01".to_string(),
+                app_name: "Diagnostics App".to_string(),
+                hosted_on: "HPC".to_string(),
+                endpoint: "http://127.0.0.1:8081/api".to_string(),
+                additional_attrs: None,
+            })
+            .await
+            .expect("registration should succeed");
+
+        assert_eq!(reply.lease_ms, Some(DEFAULT_REGISTRATION_LEASE_MS));
+        assert!(reply.registration_id.is_some());
+
+        let endpoint = runtime
+            .resolve_endpoint("APP01")
+            .await
+            .expect("resolve should succeed");
+        assert_eq!(
+            endpoint,
+            ReplyMessagePayload::UTF8("http://127.0.0.1:8081/api".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_deregister_removes_registration() {
+        let runtime = Runtime::new();
+
+        runtime
+            .register_app(RegisterAppArgs {
+                app_id: "APP02".to_string(),
+                app_name: "Telemetry App".to_string(),
+                hosted_on: "HPC".to_string(),
+                endpoint: "http://127.0.0.1:8082/api".to_string(),
+                additional_attrs: None,
+            })
+            .await
+            .expect("registration should succeed");
+
+        runtime
+            .deregister_app(DeregisterAppArgs {
+                app_id: "APP02".to_string(),
+                registration_id: None,
+            })
+            .await
+            .expect("deregistration should succeed");
+
+        let err = runtime
+            .resolve_endpoint("APP02")
+            .await
+            .expect_err("resolve should fail after deregistration");
+
+        match err.code {
+            ErrorCode::SOVD(inner) => {
+                assert_eq!(inner.sovd_error, sovd::ErrorCode::ErrorResponse.to_string());
+            }
+            _ => panic!("expected SOVD error code"),
+        }
+    }
+
+    #[tokio::test]
+    async fn runtime_heartbeat_fails_for_unknown_app() {
+        let runtime = Runtime::new();
+
+        let err = runtime
+            .heartbeat_app("UNKNOWN_APP".to_string())
+            .await
+            .expect_err("heartbeat should fail for unknown app");
+
+        match err.code {
+            ErrorCode::SOVD(inner) => {
+                assert_eq!(inner.sovd_error, sovd::ErrorCode::ErrorResponse.to_string());
+            }
+            _ => panic!("expected SOVD error code"),
         }
     }
 }
