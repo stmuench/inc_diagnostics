@@ -15,11 +15,15 @@ load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
 
 rust_library(
     name = "lib_runtime",
-    srcs = ["lib_runtime.rs"],
+    srcs = [
+        "lib_runtime.rs",
+        "opensovd_registrar.rs",
+    ],
     deps = [
         "//score/mw/diag/api",
         "@crate_index//:futures",
         "@crate_index//:indexmap",
+        "@crate_index//:serde_json",
         "@crate_index//:tokio",
     ],
 )

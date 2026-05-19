@@ -36,7 +36,7 @@ pub struct RegisterAppArgs {
 pub struct RegisterAppReply {
     // Opaque registration handle, if the backend issues one.
     pub registration_id: Option<String>,
-    // Optional lease/heartbeat window in milliseconds.
+    // Optional lease window in milliseconds.
     pub lease_ms: Option<u64>,
 }
 
@@ -59,12 +59,6 @@ pub trait AppRegistrar {
 
     // Removes a previously registered app endpoint.
     fn deregister_app(&self, args: DeregisterAppArgs) -> BoxFuture<'_, DiagResult<()>>;
-}
-
-// Optional heartbeat contract for lease-based registration backends.
-pub trait AppHeartbeat {
-    // Refreshes the lease for a registered app endpoint.
-    fn heartbeat_app(&self, app_id: String) -> BoxFuture<'_, DiagResult<()>>;
 }
 
 // Optional lookup contract for bridges that need to resolve app endpoints.
