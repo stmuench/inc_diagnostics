@@ -75,10 +75,19 @@ let uds_error = Error::from_nrc(diag_api::uds::NegativeResponseCode::ConditionsN
 
 Use `sovd::DataResource` when you want to expose a value under the runtime's data-resource model.
 
+`DataResource` has two methods: `read()` and `write()`, both returning a handle(ReadHandle/WriteHandle) that can be either:
+- **Ready**: `from_value(reply)` / `from_ok()` — result available immediately
+- **Pending**: `from_future(async move { ... })` — returns a future to await
+- **Error**: `from_error(err)` — error available immediately
+
+For async data resources, simply use `from_future(async move { ... })`.
+
+### Read-Only Data Resource
+
 The minimum implementation only needs `read`. The default `write` implementation rejects writes and therefore makes the resource read-only.
 
 ```rust
-use diag_api::sovd::data_resource::{DataResource, ReadValueArgs, ReadValueReply};
+use diag_api::sovd::data_resource::{DataResource, DataError, ReadHandle, ReadValueArgs, ReadValueReply, WriteHandle, WriteValueArgs};
 use diag_api::{ReplyMessageEncoding, ReplyMessagePayload, Result as DiagResult};
 
 struct BuildInfoResource {
@@ -86,22 +95,34 @@ struct BuildInfoResource {
 }
 
 impl DataResource for BuildInfoResource {
-    fn read(&self, input: ReadValueArgs) -> DiagResult<ReadValueReply> {
+    fn read(&self, input: ReadValueArgs) -> DiagResult<ReadHandle> {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
 
-        Ok(ReadValueReply {
-            id: Some("build_info".to_string()),
+        Ok(ReadHandle::from_value(ReadValueReply {
             data: ReplyMessagePayload::from_string(self.version.clone()),
             errors: None,
-        })
+        }))
+    }
+
+    fn write(&mut self, _input: WriteValueArgs) -> DiagResult<WriteHandle> {
+        // Read-only resource: writes not supported
+        Ok(WriteHandle::from_error(DataError::new(
+            diag_api::sovd::GenericError::from_code(
+                diag_api::sovd::ErrorCode::IncorrectMessageLengthOrInvalidFormat,
+                "resource is read-only".to_string(),
+                None,
+            ),
+        )))
     }
 }
 ```
 
+### Writable Data Resource
+
 Implement `write` only when the value is actually writable:
 
 ```rust
-use diag_api::sovd::data_resource::{DataError, DataResource, ReadValueArgs, ReadValueReply, WriteValueArgs};
+use diag_api::sovd::data_resource::{DataError, DataResource, ReadHandle, ReadValueArgs, ReadValueReply, WriteHandle, WriteValueArgs};
 use diag_api::{RequestMessagePayload, ReplyMessagePayload, Result as DiagResult};
 
 struct WritableFlag {
@@ -109,27 +130,29 @@ struct WritableFlag {
 }
 
 impl DataResource for WritableFlag {
-    fn read(&self, _input: ReadValueArgs) -> DiagResult<ReadValueReply> {
-        Ok(ReadValueReply {
-            id: Some("feature_flag".to_string()),
+    fn read(&self, _input: ReadValueArgs) -> DiagResult<ReadHandle> {
+        Ok(ReadHandle::from_value(ReadValueReply {
             data: ReplyMessagePayload::from_string(self.enabled.to_string()),
             errors: None,
-        })
+        }))
     }
 
-    fn write(&mut self, input: WriteValueArgs) -> Result<(), DataError> {
+    fn write(&mut self, input: WriteValueArgs) -> DiagResult<WriteHandle> {
         match input.user_data {
             Some(RequestMessagePayload::UTF8(value)) if value == "true" => {
                 self.enabled = true;
-                Ok(())
+                Ok(WriteHandle::from_ok())
             }
             Some(RequestMessagePayload::UTF8(value)) if value == "false" => {
                 self.enabled = false;
-                Ok(())
+                Ok(WriteHandle::from_ok())
             }
-            _ => Err(DataError::from_error(diag_api::sovd::GenericError::from_code(
-                diag_api::sovd::ErrorCode::IncompleteRequest,
-                "expected a UTF-8 boolean payload".to_string(),
+            _ => Ok(WriteHandle::from_error(DataError::new(
+                diag_api::sovd::GenericError::from_code(
+                    diag_api::sovd::ErrorCode::IncompleteRequest,
+                    "expected a UTF-8 boolean payload".to_string(),
+                    None,
+                ),
             ))),
         }
     }
@@ -147,10 +170,13 @@ let metadata = DataResourceMetadata {
     id: "build_info".to_string(),
     name: "Build Information".to_string(),
     translation_id: None,
+    read_only: true,
     category: DataCategory::IdentData,
     groups: None,
 };
 ```
+
+Declare actual read/write capabilities in metadata so clients don't need to probe by attempting operations.
 
 ## Implementing an Operation
 
@@ -206,7 +232,7 @@ The relevant intent for the below example is:
 - process execution control in another future
 - use `tokio::select!` so stop or control events can interrupt the operation cleanly
 - keep the current execution status in shared state so `ReportStatus` can always return it
-- let the user code pause itself in `Interrupted` until the control loop receives `Resume` (just for demonstration puposes here)
+- let the user code pause itself in `Interrupted` until the control loop receives `Resume` (just for demonstration purposes here)
 
 Sketch of that pattern:
 
@@ -254,17 +280,17 @@ impl AsyncOperation {
     ) {
         let mut last_exec_event_kind = ExecutionEventKind::Resume;
         loop {
-            let exec_event = exec_control.next_exec_event().await;
+            let exec_event = control.next_exec_event().await;
             match exec_event.kind {
                 ExecutionEventKind::ControlGone => break,
                 ExecutionEventKind::ReportStatus => {
                     let current_status = *exec_status.lock().unwrap();
-                    event
+                    exec_event
                         .status_reporter
-                        .put(current_status, ExecutionStatusDetails::none());
+                        .put(current_status, ExecutionStatusDetails::default());
                 }
                 _ => {
-                    let mut last_exec_event_kind = exec_event.kind;
+                    let last_exec_event_kind = exec_event.kind;
                     match last_exec_event_kind {
                         ExecutionEventKind::Resume => {
                             resume_signal.notify_one();
@@ -458,6 +484,7 @@ entity.register_data_resource(
         id: "build_info".to_string(),
         name: "Build Information".to_string(),
         translation_id: None,
+        read_only: true,
         category: DataCategory::IdentData,
         groups: None,
     },
@@ -496,6 +523,7 @@ The currently modeled event kinds include:
 
 - `HandleCustomCapability`
 - `ReportStatus`
+- `ControlGone`
 - `Interrupt`
 - `Resume`
 - `Reset`
