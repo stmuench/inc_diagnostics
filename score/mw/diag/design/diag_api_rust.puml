@@ -75,10 +75,12 @@ package common {
     }
 
     class DataError {
-      +path : String
-      +error : GenericError
+      +path : Option<String>
+      +error : Option<GenericError>
       --
       +{static} new(path: String, error: GenericError) : Self
+      +with_path(path: String) : Self
+      +with_error(error: GenericError) : Self
     }
   }
 
