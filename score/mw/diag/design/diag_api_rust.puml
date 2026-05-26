@@ -75,11 +75,10 @@ package common {
     }
 
     class DataError {
-      +path : Option<String>
+      +path : String
       +error : GenericError
       --
-      +{static} new(error: GenericError) : Self
-      +with_path(path: String) : Self
+      +{static} new(path: String, error: GenericError) : Self
     }
   }
 
@@ -245,13 +244,14 @@ package data_resource {
     +errors : Option<Vec<DataError>>
   }
 
-  enum ReadHandle <<enum>> {
+  enum ReadValueHandle <<enum>> {
     Ready(DiagResult<ReadValueReply>)
     Pending(Pin<Box<dyn Future<Output = DiagResult<ReadValueReply>> + Send>>)
     --
     +{static} from_value(reply: ReadValueReply) : Self
     +{static} from_error(err: ::common::Error) : Self
     +{static} from_future(f: impl Future<Output = DiagResult<ReadValueReply>> + Send) : Self
+    +{static} from_closure(f: impl FnOnce() -> ReadValueReply + Send) : Self
   }
 
   class WriteValueArgs {
@@ -260,18 +260,19 @@ package data_resource {
     +additional_attrs : Option<KeyValueAttributes>
   }
 
-  enum WriteHandle <<enum>> {
+  enum WriteValueHandle <<enum>> {
     Ready(Result<(), DataError>)
     Pending(Pin<Box<dyn Future<Output = Result<(), DataError>> + Send>>)
     --
     +{static} from_ok() : Self
     +{static} from_error(err: DataError) : Self
     +{static} from_future(f: impl Future<Output = Result<(), DataError>> + Send) : Self
+    +{static} from_closure(f: impl FnOnce() -> Result<(), DataError> + Send) : Self
   }
 
   interface DataResource <<trait>> {
-    +read(input: ReadValueArgs) : DiagResult<ReadHandle>
-    +write(input: WriteValueArgs) : DiagResult<WriteHandle>
+    +read(input: ReadValueArgs) : DiagResult<ReadValueHandle>
+    +write(input: WriteValueArgs) : DiagResult<WriteValueHandle>
   }
 }
 
