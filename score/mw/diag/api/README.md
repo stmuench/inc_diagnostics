@@ -77,7 +77,7 @@ Use `sovd::DataResource` when you want to expose a value under the runtime's dat
 
 `DataResource` has two methods: `read()` and `write()`, both returning a handle (ReadValueHandle/WriteValueHandle) that can be either:
 - **Ready**: `from_error(err)` — error available immediately
-- **Ready**: `ready(reply)` / `from_ok()` — result available immediately
+- **Ready**: `ready(reply)` / `ready()` — result available immediately
 - **Pending**: `from_future(async move { ... })` — returns a future to await
 - **Pending**: `from_closure(|| { ... })` — wraps a synchronous closure in an async handle for convenience
 - **Error**: `from_error(err)` — error available immediately
@@ -270,7 +270,10 @@ impl AsyncOperation {
         resume_signal: Arc<Notify>,
     ) {
         loop {
-            let exec_event = control.next_exec_event().await;
+            let exec_event = match control.next().await {
+                Some(event) => event,
+                None => break,
+            };
             match exec_event.kind {
                 ExecutionEventKind::ControlGone => break,
                 ExecutionEventKind::ReportStatus => {

@@ -360,16 +360,17 @@ package operation {
   }
 
   interface ExecutionControlApi <<trait>> {
-    +next_exec_event(&mut self) : BoxFuture<ExecutionEvent>
+    <<extends>>
+    Stream<Item = ExecutionEvent> + Send + Unpin
+    --
+    +exec_id(&self) : &ExecutionId
   }
 
   class ExecutionControl {
-    -inner : Box<dyn ExecutionControlApi + Send>
-    -exec_id : ExecutionId
+    -inner : Box<dyn ExecutionControlApi>
     --
-    +{static} from(api: impl ExecutionControlApi, exec_id: ExecutionId) : Self
-    +next_exec_event(&mut self) : BoxFuture<ExecutionEvent>
-    +exec_id() : &ExecutionId
+    +{static} new(api: impl ExecutionControlApi + 'static) : Self
+    +exec_id(&self) : &ExecutionId
   }
 
   class ExecutionHandle {
