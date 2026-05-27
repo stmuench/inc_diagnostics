@@ -75,8 +75,9 @@ let uds_error = Error::from_nrc(diag_api::uds::NegativeResponseCode::ConditionsN
 
 Use `sovd::DataResource` when you want to expose a value under the runtime's data-resource model.
 
-`DataResource` has two methods: `read()` and `write()`, both returning a handle(ReadValueHandle/WriteValueHandle) that can be either:
-- **Ready**: `from_value(reply)` / `from_ok()` — result available immediately
+`DataResource` has two methods: `read()` and `write()`, both returning a handle (ReadValueHandle/WriteValueHandle) that can be either:
+- **Ready**: `from_error(err)` — error available immediately
+- **Ready**: `ready(reply)` / `from_ok()` — result available immediately
 - **Pending**: `from_future(async move { ... })` — returns a future to await
 - **Pending**: `from_closure(|| { ... })` — wraps a synchronous closure in an async handle for convenience
 - **Error**: `from_error(err)` — error available immediately
@@ -96,25 +97,14 @@ struct BuildInfoResource {
 }
 
 impl DataResource for BuildInfoResource {
-    fn read(&self, input: ReadValueArgs) -> DiagResult<ReadValueHandle> {
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
 
         let version = self.version.clone();
-        Ok(ReadValueHandle::from_closure(move || ReadValueReply {
+        ReadValueHandle::from_closure(move || ReadValueReply {
             data: ReplyMessagePayload::from_string(version),
             errors: None,
         }))
-    }
-
-    fn write(&mut self, _input: WriteValueArgs) -> DiagResult<WriteValueHandle> {
-        // Read-only resource: writes not supported
-        Ok(WriteValueHandle::from_error(DataError::new(
-            "/".to_string(),
-            diag_api::sovd::GenericError::from_code(
-                diag_api::sovd::ErrorCode::IncorrectMessageLengthOrInvalidFormat,
-                "resource is read-only".to_string(),
-            ),
-        )))
     }
 }
 ```
@@ -132,29 +122,29 @@ struct WritableFlag {
 }
 
 impl DataResource for WritableFlag {
-    fn read(&self, _input: ReadValueArgs) -> DiagResult<ReadValueHandle> {
-        Ok(ReadValueHandle::from_value(ReadValueReply {
+    fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
+        ReadValueHandle::ready(ReadValueReply {
             data: ReplyMessagePayload::from_string(self.enabled.to_string()),
             errors: None,
-        }))
+        })
     }
 
-    fn write(&mut self, input: WriteValueArgs) -> DiagResult<WriteValueHandle> {
+    fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
         match input.user_data {
             Some(RequestMessagePayload::UTF8(value)) if value == "true" => {
                 self.enabled = true;
-                Ok(WriteValueHandle::from_ok())
+                WriteValueHandle::ready()
             }
             Some(RequestMessagePayload::UTF8(value)) if value == "false" => {
                 self.enabled = false;
-                Ok(WriteValueHandle::from_ok())
+                WriteValueHandle::ready()
             }
-            _ => Ok(WriteValueHandle::from_error(DataError::new(
+            _ => WriteValueHandle::from_error(DataError::new(
                 diag_api::sovd::GenericError::from_code(
                     diag_api::sovd::ErrorCode::IncompleteRequest,
                     "expected a UTF-8 boolean payload".to_string(),
                 ),
-            )))
+            ))
         }
     }
 }
