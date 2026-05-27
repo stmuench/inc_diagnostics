@@ -76,7 +76,7 @@ package common {
     }
 
     class DataError {
-      +path : Option<String>
+      +path : String
       +error : Option<GenericError>
       --
       +{static} new(path: String) : Self

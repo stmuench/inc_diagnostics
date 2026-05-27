@@ -143,7 +143,7 @@ impl DataResource for WritableFlag {
         ReadValueHandle::ready(ReadValueReply {
             data: ReplyMessagePayload::from_string(self.enabled.to_string()),
             errors: None,
-        }))
+        })
     }
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
