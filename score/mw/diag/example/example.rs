@@ -19,10 +19,7 @@ use diag_api::*;
 
 use diag_runtime::*;
 
-<<<<<<< HEAD
 use futures::StreamExt;
-=======
->>>>>>> 336a3d8 (score/mw/diag: adds usage examples f. RoutineControl / SimpleOperation)
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 
