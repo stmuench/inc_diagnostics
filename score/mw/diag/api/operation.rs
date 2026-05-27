@@ -282,6 +282,8 @@ pub trait Operation {
 mod tests {
     use super::*;
     use common::ReplyMessagePayload;
+    use futures::StreamExt;
+    use std::task::{Context, Poll};
 
     // ── ExecutionStatus ───────────────────────────────────────────────
 
@@ -883,59 +885,87 @@ mod tests {
 
     // ── ExecutionControl ──────────────────────────────────────────────
 
-    #[tokio::test]
-    async fn execution_control_wraps_api() {
-        struct MockControl {
-            events: Vec<ExecutionEventKind>,
-        }
+    struct MockControl {
+        events: Vec<ExecutionEventKind>,
+        exec_id: ExecutionId,
+    }
 
-        impl ExecutionControlApi for MockControl {
-            fn next_exec_event(&mut self) -> BoxFuture<'_, ExecutionEvent> {
-                let kind = if self.events.is_empty() {
-                    ExecutionEventKind::ControlGone
-                } else {
-                    self.events.remove(0)
-                };
-                Box::pin(async move {
-                    ExecutionEvent {
-                        kind,
-                        args: None,
-                        status_reporter: StatusReporter::default(),
-                    }
-                })
+    impl Stream for MockControl {
+        type Item = ExecutionEvent;
+        fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let this = self.get_mut();
+            if this.events.is_empty() {
+                Poll::Ready(None)
+            } else {
+                let kind = this.events.remove(0);
+                Poll::Ready(Some(ExecutionEvent {
+                    kind,
+                    args: None,
+                    status_reporter: StatusReporter::default(),
+                }))
             }
         }
+    }
 
-        let mock = MockControl {
+    impl ExecutionControl for MockControl {
+        fn exec_id(&self) -> &ExecutionId {
+            &self.exec_id
+        }
+    }
+
+    #[tokio::test]
+    async fn execution_control_streams_events() {
+        let mut ctrl: Box<dyn ExecutionControl> = Box::new(MockControl {
             events: vec![ExecutionEventKind::Stop],
-        };
-        let mut ctrl = ExecutionControl::new(mock, "exec-1".to_string());
-        let event = ctrl.next_exec_event().await;
+            exec_id: "exec-1".to_string(),
+        });
+        let event = ctrl.next().await.unwrap();
         assert!(matches!(event.kind, ExecutionEventKind::Stop));
 
-        let event2 = ctrl.next_exec_event().await;
-        assert!(matches!(event2.kind, ExecutionEventKind::ControlGone));
+        let event2 = ctrl.next().await;
+        assert!(event2.is_none());
     }
 
     #[tokio::test]
     async fn execution_control_event_with_args() {
-        struct MockControlWithArgs;
+        struct MockControlWithArgs {
+            sent: bool,
+            exec_id: ExecutionId,
+        }
 
-        impl ExecutionControlApi for MockControlWithArgs {
-            fn next_exec_event(&mut self) -> BoxFuture<'_, ExecutionEvent> {
-                Box::pin(async move {
-                    ExecutionEvent::new(ExecutionEventKind::Resume).with_args(ExecuteArguments {
-                        reply_encoding: ReplyMessageEncoding::Binary,
-                        user_parameters: Some(RequestMessagePayload::Binary(vec![0xCD])),
-                        additional_attrs: None,
-                        proximity_response: None,
-                    })
-                })
+        impl Stream for MockControlWithArgs {
+            type Item = ExecutionEvent;
+            fn poll_next(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+                let this = self.get_mut();
+                if this.sent {
+                    Poll::Ready(None)
+                } else {
+                    this.sent = true;
+                    Poll::Ready(Some(
+                        ExecutionEvent::new(ExecutionEventKind::Resume).with_args(
+                            ExecuteArguments {
+                                reply_encoding: ReplyMessageEncoding::Binary,
+                                user_parameters: Some(RequestMessagePayload::Binary(vec![0xCD])),
+                                additional_attrs: None,
+                                proximity_response: None,
+                            },
+                        ),
+                    ))
+                }
             }
         }
 
-        let mut ctrl = ExecutionControl::new(MockControlWithArgs, "exec-2".to_string());
-        let event = ctrl.next_exec_event().await;
+        impl ExecutionControl for MockControlWithArgs {
+            fn exec_id(&self) -> &ExecutionId {
+                &self.exec_id
+            }
+        }
+
+        let mut ctrl: Box<dyn ExecutionControl> = Box::new(MockControlWithArgs {
+            sent: false,
+            exec_id: "exec-2".to_string(),
+        });
+        let event = ctrl.next().await.unwrap();
         assert!(matches!(event.kind, ExecutionEventKind::Resume));
         let args = event.args.unwrap();
         assert_eq!(
@@ -946,15 +976,10 @@ mod tests {
 
     #[tokio::test]
     async fn execution_control_get_exec_id() {
-        struct DummyControl;
-
-        impl ExecutionControlApi for DummyControl {
-            fn next_exec_event(&mut self) -> BoxFuture<'_, ExecutionEvent> {
-                Box::pin(async { ExecutionEvent::new(ExecutionEventKind::ControlGone) })
-            }
-        }
-
-        let ctrl = ExecutionControl::new(DummyControl, "my-exec-42".to_string());
+        let ctrl: Box<dyn ExecutionControl> = Box::new(MockControl {
+            events: vec![],
+            exec_id: "my-exec-42".to_string(),
+        });
         assert_eq!(ctrl.exec_id(), "my-exec-42");
     }
 
@@ -968,7 +993,7 @@ mod tests {
             fn execute(
                 &mut self,
                 _input: ExecuteArguments,
-                _control: ExecutionControl,
+                _control: Box<dyn ExecutionControl>,
             ) -> DiagResult<ExecutionHandle> {
                 Ok(ExecutionHandle::from_closure(|| {
                     Ok(DiagnosticReply {
@@ -979,14 +1004,6 @@ mod tests {
             }
         }
 
-        struct NoOpControl;
-
-        impl ExecutionControlApi for NoOpControl {
-            fn next_exec_event(&mut self) -> BoxFuture<'_, ExecutionEvent> {
-                Box::pin(async { ExecutionEvent::new(ExecutionEventKind::ControlGone) })
-            }
-        }
-
         let mut op = MockOp;
         let args = ExecuteArguments {
             reply_encoding: ReplyMessageEncoding::UTF8,
@@ -994,7 +1011,10 @@ mod tests {
             additional_attrs: None,
             proximity_response: None,
         };
-        let ctrl = ExecutionControl::new(NoOpControl, "exec-1".to_string());
+        let ctrl: Box<dyn ExecutionControl> = Box::new(MockControl {
+            events: vec![],
+            exec_id: "exec-1".to_string(),
+        });
         let handle = op.execute(args, ctrl).unwrap();
         let result = handle.future.await;
         assert_eq!(
