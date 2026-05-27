@@ -39,6 +39,7 @@ rust_test(
     deps = [
         ":diag_runtime",
         "//score/mw/diag/api",
+        "@crate_index//:futures",
         "@crate_index//:tokio",
     ],
 )
