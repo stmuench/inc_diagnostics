@@ -120,7 +120,7 @@ impl DataResource for BuildInfoResource {
         ReadValueHandle::from_closure(move || Ok(ReadValueReply {
             data: ReplyMessagePayload::from_string(version),
             errors: None,
-        }))
+        })
     }
 }
 ```
@@ -145,6 +145,7 @@ impl DataResource for WritableFlag {
             errors: None,
         })
     }
+}
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
         match input.user_data {
