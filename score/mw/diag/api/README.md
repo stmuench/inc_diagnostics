@@ -145,7 +145,6 @@ impl DataResource for WritableFlag {
             errors: None,
         })
     }
-}
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
         match input.user_data {
