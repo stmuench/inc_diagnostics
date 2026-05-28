@@ -80,9 +80,10 @@ Use `sovd::DataResource` when you want to expose a value under the runtime's dat
 - **Ready**: `ready(reply)` / `ready()` — result available immediately
 - **Pending**: `from_future(async move { ... })` — returns a future to await
 - **Pending**: `from_closure(|| { ... })` — wraps a synchronous closure in an async handle that returns the result directly
-- **Error**: `from_error(err)` — error available immediately
 
-For async data resources, use `from_future(async move { ... })` where the closure returns the final result. For simple synchronous operations, use `from_closure(|| { ... })` where the closure directly returns the result without async wrapping.
+For async data resources, use `from_future(async move { ... })` where the closure returns the final result.
+
+For simple synchronous operations, use `from_closure(|| { ... })` where the closure directly returns the result without async wrapping.
 
 ### Read-Only Data Resource
 
@@ -128,7 +129,6 @@ impl DataResource for WritableFlag {
             errors: None,
         })
     }
-}
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
         match input.user_data {
@@ -141,7 +141,7 @@ impl DataResource for WritableFlag {
                 WriteValueHandle::ready()
             }
             _ => WriteValueHandle::from_error(DataError::new(
-                "WritableFlag".to_string(),
+                "/data/x".to_string()
             ).with_error(diag_api::sovd::GenericError::from_code(
                 diag_api::sovd::ErrorCode::IncompleteRequest,
                 "expected a UTF-8 boolean payload".to_string(),
@@ -437,12 +437,12 @@ struct MyRoutine {
 impl RoutineControl for MyRoutine {
     fn start(&mut self, _input: Option<&[u8]>) -> DiagResult<StartRoutine> {
         let completion = self.completion.clone();
-        StartRoutine::from_future_with_reply(
+        StartRoutine::from_future(
             async move {
                 completion.notified().await;
                 Ok(Some(vec![0xCA, 0xFE]))
             },
-            vec![0xBE, 0xEF],
+            Some(vec![0xBE, 0xEF]),
         )
     }
 

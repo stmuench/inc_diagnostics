@@ -30,8 +30,8 @@ package common {
     serde_json::Value
   }
 
-  class JsonSchema <<alias>> {
-    serde_json::Value
+  class JsonSchema {
+    +value : serde_json::Value
   }
 
   class KeyValueAttributes <<alias>> {
@@ -252,8 +252,8 @@ package data_resource {
     --
     +{static} ready(reply: ReadValueReply) : Self
     +{static} from_error(err: ::common::Error) : Self
-    +{static} from_future(f: impl Future<Output = DiagResult<ReadValueReply>> + Send) : Self
-    +{static} from_closure(f: impl FnOnce() -> ReadValueReply + Send) : Self
+    +{static} from_future(fut: impl Future<Output = DiagResult<ReadValueReply>> + Send) : Self
+    +{static} from_closure(func: impl FnOnce() -> DiagResult<ReadValueReply> + Send) : Self
   }
 
   class WriteValueArgs {
@@ -268,8 +268,8 @@ package data_resource {
     --
     +{static} ready() : Self
     +{static} from_error(err: DataError) : Self
-    +{static} from_future(f: impl Future<Output = Result<(), DataError>> + Send) : Self
-    +{static} from_closure(f: impl FnOnce() -> Result<(), DataError> + Send) : Self
+    +{static} from_future<Fut>(future: Fut) : Self where Fut: Future<Output = Result<(), DataError>> + Send
+    +{static} from_closure<Func>(func: Func) : Self where Func: FnOnce() -> Result<(), DataError> + Send
   }
 
   interface DataResource <<trait>> {
@@ -356,7 +356,7 @@ package operation {
     --
     +{static} from_kind(kind: ExecutionEventKind) : ExecutionEvent
     +with_args(args: ExecuteArguments) : ExecutionEvent
-    +with_status_reporter(f) : ExecutionEvent
+    +with_status_reporter<Func>(func: Func) : ExecutionEvent where Func: FnOnce(ExecutionStatus, ExecutionStatusDetails)
   }
 
   interface ExecutionControl <<trait>> {
@@ -370,8 +370,8 @@ package operation {
     +future : Pin<Box<dyn Future<Output = ExecutionResult> + Send>>
     +reply : Option<DiagnosticReply>
     --
-    +{static} from_closure(f, reply: Option<DiagnosticReply>) : ExecutionHandle
-    +{static} from_future(f, reply: Option<DiagnosticReply>) : ExecutionHandle
+    +{static} from_closure<Func>(func: Func) : Self where Func: FnOnce() -> ExecutionHandle
+    +{static} from_future<Fut>(future: Fut) : Self where Fut: Future<Output = ExecutionHandle>
     +{static} from_error(err: ::common::sovd::Error) : DiagResult<ExecutionHandle>
   }
 
@@ -431,8 +431,8 @@ package uds {
     +future : Pin<Box<dyn Future<Output = DiagResult<Option<ByteVector>>> + Send>>
     +reply : Option<ByteVector>
     --
-    +{static} from_closure(closure, reply: Option<ByteVector>) : StartRoutine
-    +{static} from_future(future, reply: Option<ByteVector>) : StartRoutine
+    +{static} from_closure<Func>(closure: Func, reply: Option<ByteVector>) : StartRoutine where Func: FnOnce() -> DiagResult<Option<ByteVector>>
+    +{static} from_future<Fut>(future: Fut, reply: Option<ByteVector>) : StartRoutine where Fut: Future<Output = DiagResult<Option<ByteVector>>>
     +{static} from_nrc(nrc: NegativeResponseCode) : DiagResult<StartRoutine>
   }
 }
