@@ -359,17 +359,10 @@ package operation {
     +with_status_reporter(f) : ExecutionEvent
   }
 
-  interface ExecutionControlApi <<trait>> {
+  interface ExecutionControl <<trait>> {
     <<extends>>
     Stream<Item = ExecutionEvent> + Send + Unpin
     --
-    +exec_id(&self) : &ExecutionId
-  }
-
-  class ExecutionControl {
-    -inner : Box<dyn ExecutionControlApi>
-    --
-    +{static} new(api: impl ExecutionControlApi + 'static) : Self
     +exec_id(&self) : &ExecutionId
   }
 
@@ -390,7 +383,7 @@ package operation {
   }
 
   interface Operation <<trait>> {
-    +execute(input: ExecuteArguments, control: ExecutionControl) : DiagResult<ExecutionHandle>
+    +execute(input: ExecuteArguments, control: Box<dyn ExecutionControl>) : DiagResult<ExecutionHandle>
   }
 }
 
@@ -504,7 +497,6 @@ operation.ExecutionEventKind *-- operation.CustomCapability : HandleCustomCapabi
 operation.ExecutionEvent *-- operation.ExecutionEventKind
 operation.ExecutionEvent *-- operation.ExecuteArguments
 operation.ExecutionEvent *-- operation.StatusReporter
-operation.ExecutionControl *-- operation.ExecutionControlApi : inner
 operation.ExecutionControl *-- operation.ExecutionId
 operation.ExecutionHandle *-- common.DiagnosticReply
 operation.ExecutionHandle --> operation.ExecutionResult

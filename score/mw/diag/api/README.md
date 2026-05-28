@@ -79,10 +79,10 @@ Use `sovd::DataResource` when you want to expose a value under the runtime's dat
 - **Ready**: `from_error(err)` — error available immediately
 - **Ready**: `ready(reply)` / `ready()` — result available immediately
 - **Pending**: `from_future(async move { ... })` — returns a future to await
-- **Pending**: `from_closure(|| { ... })` — wraps a synchronous closure in an async handle for convenience
+- **Pending**: `from_closure(|| { ... })` — wraps a synchronous closure in an async handle that returns the result directly
 - **Error**: `from_error(err)` — error available immediately
 
-For async data resources, use `from_future(async move { ... })`. For simple synchronous operations, use `from_closure(|| { ... })`.
+For async data resources, use `from_future(async move { ... })` where the closure returns the final result. For simple synchronous operations, use `from_closure(|| { ... })` where the closure directly returns the result without async wrapping.
 
 ### Read-Only Data Resource
 
@@ -104,7 +104,7 @@ impl DataResource for BuildInfoResource {
         ReadValueHandle::from_closure(move || ReadValueReply {
             data: ReplyMessagePayload::from_string(version),
             errors: None,
-        }))
+        })
     }
 }
 ```
@@ -128,6 +128,7 @@ impl DataResource for WritableFlag {
             errors: None,
         })
     }
+}
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
         match input.user_data {
@@ -140,11 +141,11 @@ impl DataResource for WritableFlag {
                 WriteValueHandle::ready()
             }
             _ => WriteValueHandle::from_error(DataError::new(
-                diag_api::sovd::GenericError::from_code(
-                    diag_api::sovd::ErrorCode::IncompleteRequest,
-                    "expected a UTF-8 boolean payload".to_string(),
-                ),
-            ))
+                "WritableFlag".to_string(),
+            ).with_error(diag_api::sovd::GenericError::from_code(
+                diag_api::sovd::ErrorCode::IncompleteRequest,
+                "expected a UTF-8 boolean payload".to_string(),
+            )))
         }
     }
 }
@@ -176,7 +177,7 @@ Use `sovd::Operation` when you need full control over execution lifecycle handli
 `execute` receives:
 
 - `ExecuteArguments`, containing requested reply encoding, user payload, additional attributes, and optional proximity proof data
-- `ExecutionControl`, which is the channel through which the runtime delivers execution events such as status queries, stop requests, or custom capabilities
+- `ExecutionControl`, a trait that extends `Stream<Item = ExecutionEvent>`, through which the runtime delivers execution events such as status queries, stop requests, or custom capabilities
 
 `execute` returns an `ExecutionHandle`. That handle contains:
 
@@ -197,7 +198,7 @@ impl Operation for PingOperation {
     fn execute(
         &mut self,
         input: ExecuteArguments,
-        _control: ExecutionControl,
+        _control: Box<dyn ExecutionControl>,
     ) -> DiagResult<ExecutionHandle> {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
 
@@ -307,7 +308,7 @@ impl Operation for AsyncOperation {
     fn execute(
         &mut self,
         input: ExecuteArguments,
-        control: ExecutionControl,
+        control: Box<dyn ExecutionControl>,
     ) -> DiagResult<ExecutionHandle> {
         let exec_status = Arc::new(Mutex::new(ExecutionStatus::Running));
         let resume_signal = Arc::new(Notify::new());
@@ -376,7 +377,7 @@ impl SimpleOperation for EraseOperation {
     }
 }
 
-let operation = SimpleOperationAdapter::from(EraseOperation);
+let operation = SimpleOperationAdapter::new(EraseOperation);
 let metadata = OperationMetadata {
     proximity_proof_required: false,
     synchronous_execution: true,
@@ -451,7 +452,7 @@ impl RoutineControl for MyRoutine {
     }
 }
 
-let operation = SimpleOperationAdapter::from(RoutineControlAdapter::from(MyRoutine {
+let operation = SimpleOperationAdapter::new(RoutineControlAdapter::new(MyRoutine {
     completion: Arc::new(Notify::new()),
 }));
 ```
