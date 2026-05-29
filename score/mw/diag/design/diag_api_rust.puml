@@ -272,9 +272,18 @@ package data_resource {
     +{static} from_closure<Func>(func: Func) : Self where Func: FnOnce() -> Result<(), DataError> + Send
   }
 
-  interface DataResource <<trait>> {
+  interface ReadOnlyDataResource <<trait>> {
     +read(input: ReadValueArgs) : ReadValueHandle
+  }
+
+  interface WritableDataResource <<trait>> {
     +write(input: WriteValueArgs) : WriteValueHandle
+  }
+
+  interface DataResource <<trait>> {
+    API definition for SOVD data resources
+    <<trait>>
+    Blanket impl for T: ReadOnlyDataResource + WritableDataResource
   }
 }
 
@@ -421,6 +430,12 @@ package uds {
     +write(input: ByteSlice) : DiagResult<()>
   }
 
+  interface DataIdentifier <<trait>> {
+    API definition for UDS DataIdentifier (Read + Write)
+    <<trait>>
+    Blanket impl for T: ReadDataByIdentifier + WriteDataByIdentifier
+  }
+
   interface RoutineControl <<trait>> {
     +start(input: Option<ByteSlice>) : DiagResult<StartRoutine>
     +stop(input: Option<ByteSlice>) : DiagResult<Option<ByteVector>>
@@ -459,6 +474,68 @@ package uds_adapters {
   }
 }
 
+package registration {
+
+  interface DiagnosticEntity <<trait>> {
+    +entity_id() : &str
+  }
+
+  class "DiagnosticServicesCollectionBuilder<'entity>" as SovdDiagnosticServicesCollectionBuilder {
+    +{static} new<T: DiagnosticEntity + Send + Sync + 'entity>(entity: T) : Self
+    +with_read_resource<T: ReadOnlyDataResource + Send + Sync + 'static>(self, resource: T, metadata: DataResourceMetadata, schema: JsonSchema) : Self
+    +with_write_resource<T: WritableDataResource + Send + 'static>(self, resource: T, metadata: DataResourceMetadata, schema: JsonSchema) : Self
+    +with_data_resource<T: DataResource + Send + Sync + 'static>(self, resource: T, metadata: DataResourceMetadata, schema: JsonSchema) : Self
+    +with_operation<T: Operation + Send + Sync + 'static>(self, id: impl Into<String>, operation: T, metadata: OperationMetadata) : Self
+    .. final step ..
+    +build(self) : DiagResult<DiagnosticServicesCollection<'entity>>
+  }
+
+  class "DiagnosticServicesCollection<'entity>" as SovdDiagnosticServicesCollection {
+    +get_read_resource(&self, id: &str) : Option<&dyn ReadOnlyDataResource>
+    +get_write_resource_mut(&mut self, id: &str) : Option<&mut dyn WritableDataResource>
+    +get_operation(&self, id: &str) : Option<&dyn Operation>
+    +get_operation_mut(&mut self, id: &str) : Option<&mut dyn Operation>
+    +entity(&self) : &dyn DiagnosticEntity
+  }
+
+  note right of SovdDiagnosticServicesCollection
+    Lifetime annotation 'entity allows non-'static entity types.
+    Entity owned via type erasure (no circular dependency)
+    Automatic cleanup on Drop
+  end note
+
+  class "DiagnosticServicesCollectionBuilder" as UdsDiagnosticServicesCollectionBuilder {
+    +{static} new() : Self
+    +with_data_id<T: DataIdentifier + Send + 'static>(self, id: impl Into<String>, service: T) : Self
+    +with_read_did<T: ReadDataByIdentifier + Send + 'static>(self, id: impl Into<String>, service: T) : Self
+    +with_write_did<T: WriteDataByIdentifier + Send + 'static>(self, id: impl Into<String>, service: T) : Self
+    +with_routine<T: RoutineControl + Send + 'static>(self, id: impl Into<String>, routine: T) : Self
+    .. final step ..
+    +build(self) : DiagResult<DiagnosticServicesCollection>
+  }
+
+  class DiagnosticServicesCollection {
+    +get_read_did(&self, id: &str) : Option<&dyn ReadDataByIdentifier>
+    +get_write_did_mut(&mut self, id: &str) : Option<&mut dyn WriteDataByIdentifier>
+    +get_routine(&self, id: &str) : Option<&dyn RoutineControl>
+    +get_routine_mut(&mut self, id: &str) : Option<&mut dyn RoutineControl>
+  }
+
+  interface ServiceRegistrar <<trait>> {
+    Binding layer abstraction for registering services with runtime
+    <<trait>>
+    --
+    +register_sovd_services<'entity>(collection: DiagnosticServicesCollection<'entity>) : DiagResult<()>
+    +register_uds_services(collection: DiagnosticServicesCollection) : DiagResult<()>
+  }
+
+  note right of ServiceRegistrar
+    User code uses this trait to register built collections.
+    Runtime implements this trait internally.
+    Provides abstraction boundary preventing direct runtime access.
+  end note
+}
+
 common.ErrorCode *-- common.sovd.Error : SOVD
 common.ErrorCode *-- common.uds.NegativeResponseCode : UDS
 common.Error *-- common.ErrorCode
@@ -482,6 +559,9 @@ data_resource.ReadValueReply --> common.ReplyMessagePayload
 data_resource.ReadValueReply --> common.sovd.DataError
 data_resource.WriteValueArgs *-- common.KeyValueAttributes
 data_resource.WriteValueArgs *-- common.RequestMessagePayload
+data_resource.ReadOnlyDataResource ..> data_resource.ReadValueArgs
+data_resource.ReadOnlyDataResource ..> data_resource.ReadValueReply
+data_resource.WritableDataResource ..> data_resource.WriteValueArgs
 data_resource.DataResource ..> data_resource.ReadValueArgs
 data_resource.DataResource ..> data_resource.ReadValueReply
 data_resource.DataResource ..> data_resource.WriteValueArgs
@@ -516,11 +596,32 @@ simple_operation.SimpleOperationAdapter --|> operation.Operation : <<implements>
 
 uds.RoutineControl ..> uds.StartRoutine
 uds.StartRoutine ..> common.uds.NegativeResponseCode
+uds.DataIdentifier ..> uds.ReadDataByIdentifier : requires
+uds.DataIdentifier ..> uds.WriteDataByIdentifier : requires
 
 uds_adapters.DataResourceAdapter --|> data_resource.DataResource : <<implements>>
 uds_adapters.DataResourceAdapter *-- uds.ReadDataByIdentifier : RDBI
 uds_adapters.DataResourceAdapter *-- uds.WriteDataByIdentifier : WDBI
 uds_adapters.RoutineControlAdapter --|> simple_operation.SimpleOperation : <<implements>>
 uds_adapters.RoutineControlAdapter *-- uds.RoutineControl
+
+registration.SovdDiagnosticServicesCollectionBuilder --> registration.SovdDiagnosticServicesCollection : creates
+registration.SovdDiagnosticServicesCollectionBuilder ..> data_resource.ReadOnlyDataResource : accepts (moved into Box)
+registration.SovdDiagnosticServicesCollectionBuilder ..> data_resource.WritableDataResource : accepts (moved into Box)
+registration.SovdDiagnosticServicesCollectionBuilder ..> data_resource.DataResource : accepts (moved into Box)
+registration.SovdDiagnosticServicesCollectionBuilder ..> operation.Operation : accepts (moved into Box)
+registration.SovdDiagnosticServicesCollectionBuilder ..> operation.ExecutionControl : accepts (moved into Box)
+
+registration.UdsDiagnosticServicesCollectionBuilder --> registration.DiagnosticServicesCollection : creates
+registration.UdsDiagnosticServicesCollectionBuilder ..> uds.DataIdentifier : accepts (moved into Box)
+registration.UdsDiagnosticServicesCollectionBuilder ..> uds.ReadDataByIdentifier : accepts (moved into Box)
+registration.UdsDiagnosticServicesCollectionBuilder ..> uds.WriteDataByIdentifier : accepts (moved into Box)
+registration.UdsDiagnosticServicesCollectionBuilder ..> uds.RoutineControl : accepts (moved into Box)
+
+registration.SovdDiagnosticServicesCollection --> registration.ServiceRegistrar : passed to
+registration.DiagnosticServicesCollection --> registration.ServiceRegistrar : passed to
+registration.ServiceRegistrar ..> operation.Runtime : internal use (binding layer)
+
+note on link : "User code interacts with builder and passes collection to ServiceRegistrar.\nRuntime internals remain hidden from user code."
 
 @enduml

@@ -28,6 +28,7 @@ The most relevant building blocks are:
 - `SimpleOperation`: simplified operation interface only requiring start and stop semantics
 - `ReadDataByIdentifier`, `WriteDataByIdentifier`, `RoutineControl`: UDS-specific traits
 - `DataResourceAdapter`, `RoutineControlAdapter`, `SimpleOperationAdapter`: bridge types that adapt UDS or simplified implementations to the runtime-facing API
+- `DiagnosticServicesCollectionBuilder`: builder for registering services
 
 ## Common Payload and Error Types
 
@@ -75,7 +76,7 @@ let uds_error = Error::from_nrc(diag_api::uds::NegativeResponseCode::ConditionsN
 
 Use `sovd::DataResource` when you want to expose a value under the runtime's data-resource model.
 
-`DataResource` has two methods: `read()` and `write()`, both returning a handle (ReadValueHandle/WriteValueHandle) that can be either:
+``DataResource` is a blanket impl for types implementing `ReadOnlyDataResource` and `WritableDataResource`. Each returning a handle (ReadValueHandle/WriteValueHandle) that can be either:
 - **Ready**: `from_error(err)` — error available immediately
 - **Ready**: `ready(reply)` / `ready()` — result available immediately
 - **Pending**: `from_future(async move { ... })` — returns a future to await
@@ -90,14 +91,14 @@ For simple synchronous operations, use `from_closure(|| { ... })` where the clos
 The minimum implementation only needs `read`. The default `write` implementation rejects writes and therefore makes the resource read-only.
 
 ```rust
-use diag_api::sovd::data_resource::{DataResource, DataError, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
+use diag_api::sovd::data_resource::{DataResource, DataError, ReadOnlyDataResource, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
 use diag_api::{ReplyMessageEncoding, ReplyMessagePayload, Result as DiagResult};
 
 struct BuildInfoResource {
     version: String,
 }
 
-impl DataResource for BuildInfoResource {
+impl ReadOnlyDataResource for BuildInfoResource {
     fn read(&self, input: ReadValueArgs) -> ReadValueHandle {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
 
@@ -115,14 +116,14 @@ impl DataResource for BuildInfoResource {
 Implement `write` only when the value is actually writable:
 
 ```rust
-use diag_api::sovd::data_resource::{DataError, DataResource, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
+use diag_api::sovd::data_resource::{DataError, ReadValueHandle, ReadOnlyDataResource, ReadValueArgs, ReadValueReply, WriteValueHandle, WritableDataResource, WriteValueArgs};
 use diag_api::{RequestMessagePayload, ReplyMessagePayload, Result as DiagResult};
 
 struct WritableFlag {
     enabled: bool,
 }
 
-impl DataResource for WritableFlag {
+impl ReadOnlyDataResource for WritableFlag {
     fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
         ReadValueHandle::ready(ReadValueReply {
             data: ReplyMessagePayload::from_string(self.enabled.to_string()),
@@ -130,6 +131,7 @@ impl DataResource for WritableFlag {
         })
     }
 
+impl WritableDataResource for WritableFlag {
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
         match input.user_data {
             Some(RequestMessagePayload::UTF8(value)) if value == "true" => {
@@ -459,6 +461,38 @@ let operation = SimpleOperationAdapter::new(RoutineControlAdapter::new(MyRoutine
 
 ## Registering Implementations at the Runtime
 
+### Registration Design Goals
+
+**DiagnosticServicesCollectionBuilder**
+- Provides a standard way to register services without coupling user code to runtime internals
+- User code does NOT directly call runtime internals
+- Builder takes ownership of the entity and validates the configuration
+- Produces a `DiagnosticServicesCollection` whose lifetime is tied to the provided entity
+
+**DiagnosticServicesCollection**
+- Manages service lifetime and maintains the runtime connection
+- Lifetime is bound to the provided entity (supports non-`'static` entity types)
+- Passed to the binding layer for runtime integration
+
+### Intended Registration Pattern
+
+Use `DiagnosticServicesCollectionBuilder` to bundle services before registration:
+
+```rust,ignore
+// SOVD: requires DiagnosticEntity
+let collection = DiagnosticServicesCollectionBuilder::new(my_entity)
+    .with_read_resource(resource, metadata, schema)
+    .with_operation("op", operation, op_metadata)
+    .build()?;
+
+// UDS: no entity required
+let collection = DiagnosticServicesCollectionBuilder::new()
+    .with_read_did("F190", VinDid)
+    .with_routine("0301", MyRoutine::new())
+    .build()?;
+```
+
+Alternatively, register directly on runtime entities:
 The example test code in [../examples/examples.rs](../examples/examples.rs) shows the expected runtime integration point:
 
 ```rust
