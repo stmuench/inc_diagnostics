@@ -115,6 +115,14 @@ rust_library(
     ],
 )
 
+rust_test(
+    name = "uds_test",
+    crate = ":uds",
+    deps = [
+        "@crate_index//:tokio",
+    ],
+)
+
 rust_library(
     name = "uds_adapters",
     srcs = ["uds_adapters.rs"],
