@@ -30,8 +30,8 @@ package common {
     serde_json::Value
   }
 
-  class JsonSchema {
-    +value : serde_json::Value
+  class JsonSchema <<alias>> {
+    serde_json::Value
   }
 
   class KeyValueAttributes <<alias>> {
@@ -68,10 +68,10 @@ package common {
       +translation_id : Option<String>
       +additional_attrs : Option<KeyValueAttributes>
       --
-      +{static} from_code(code: ErrorCode, message: String, translation_id: Option<String>) : Self
-      +{static} from_vendor_error(error: String, message: String, translation_id: Option<String>) : Self
-      +add_additional_attr(key: String, value: String) : Self
-      +set_additional_attrs(attrs: KeyValueAttributes) : Self
+      +{static} from_code(code: ErrorCode, message: String) : Self
+      +{static} from_vendor_error(error: String, message: String) : Self
+      +with_translation_id(translation_id: String) : Self
+      +with_additional_attrs(attrs: KeyValueAttributes) : Self
     }
 
     class DataError {
@@ -215,7 +215,7 @@ package data_resource {
       CurrentData
       StoredData
       SysInfo
-      Custom
+      Custom(String)
     }
 
     class DataCategoryInfo {
@@ -252,7 +252,7 @@ package data_resource {
     --
     +{static} ready(reply: ReadValueReply) : Self
     +{static} from_error(err: ::common::Error) : Self
-    +{static} from_future(fut: impl Future<Output = DiagResult<ReadValueReply>> + Send) : Self
+    +{static} from_future(future: impl Future<Output = DiagResult<ReadValueReply>> + Send) : Self
     +{static} from_closure(func: impl FnOnce() -> DiagResult<ReadValueReply> + Send) : Self
   }
 
@@ -322,16 +322,17 @@ package operation {
     +exec_errors : Option<Vec<::common::Error>>
     --
     +{static} default() : ExecutionStatusDetails
-    +{static} from(ExecutionEventKind) : ExecutionStatusDetails
-    +with_reply_data(DiagnosticReply) : ExecutionStatusDetails
-    +with_exec_errors(Vec<::common::Error>) : ExecutionStatusDetails
+    +{static} new(event_kind: ExecutionEventKind) : ExecutionStatusDetails
+    +with_completion_percentage(completion_percentage: u8) : ExecutionStatusDetails
+    +with_reply_data(event_result: DiagnosticReply) : ExecutionStatusDetails
+    +with_exec_errors(exec_errors: Vec<::common::Error>) : ExecutionStatusDetails
   }
 
   class StatusReporter {
     -inner : Option<Box<dyn FnOnce(ExecutionStatus, ExecutionStatusDetails) + Send>>
     --
     +{static} default() : StatusReporter
-    +{static} new(f) : StatusReporter
+    +{static} new(func: impl FnOnce(ExecutionStatus, ExecutionStatusDetails) + Send) : StatusReporter
     +put(status: ExecutionStatus, details: ExecutionStatusDetails)
   }
 
@@ -354,7 +355,7 @@ package operation {
     +args : Option<ExecuteArguments>
     +status_reporter : StatusReporter
     --
-    +{static} from_kind(kind: ExecutionEventKind) : ExecutionEvent
+    +{static} new(kind: ExecutionEventKind) : ExecutionEvent
     +with_args(args: ExecuteArguments) : ExecutionEvent
     +with_status_reporter<Func>(func: Func) : ExecutionEvent where Func: FnOnce(ExecutionStatus, ExecutionStatusDetails)
   }
@@ -370,9 +371,9 @@ package operation {
     +future : Pin<Box<dyn Future<Output = ExecutionResult> + Send>>
     +reply : Option<DiagnosticReply>
     --
-    +{static} from_closure<Func>(func: Func) : Self where Func: FnOnce() -> ExecutionHandle
-    +{static} from_future<Fut>(future: Fut) : Self where Fut: Future<Output = ExecutionHandle>
-    +{static} from_error(err: ::common::sovd::Error) : DiagResult<ExecutionHandle>
+    +{static} from_closure<Func>(func: Func) : Self where Func: FnOnce() -> ExecutionResult
+    +{static} from_future<Fut>(future: Fut) : Self where Fut: Future<Output = ExecutionResult>
+    +with_reply(r: DiagnosticReply) : Self
   }
 
   class OperationMetadata {
@@ -431,9 +432,55 @@ package uds {
     +future : Pin<Box<dyn Future<Output = DiagResult<Option<ByteVector>>> + Send>>
     +reply : Option<ByteVector>
     --
-    +{static} from_closure<Func>(closure: Func, reply: Option<ByteVector>) : StartRoutine where Func: FnOnce() -> DiagResult<Option<ByteVector>>
-    +{static} from_future<Fut>(future: Fut, reply: Option<ByteVector>) : StartRoutine where Fut: Future<Output = DiagResult<Option<ByteVector>>>
+    +{static} from_closure<Func>(func: Func, reply: Option<ByteVector>) : DiagResult<StartRoutine> where Func: FnOnce() -> DiagResult<Option<ByteVector>>
+    +{static} from_future<Fut>(future: Fut, reply: Option<ByteVector>) : DiagResult<StartRoutine> where Fut: Future<Output = DiagResult<Option<ByteVector>>>
     +{static} from_nrc(nrc: NegativeResponseCode) : DiagResult<StartRoutine>
+  }
+
+  interface UdsSerialize <<trait>> {
+    +serialize(&self) -> DiagResult<ByteVector>
+  }
+
+  interface UdsDeserialize <<trait>> {
+    +{static} deserialize(data: ByteSlice) -> DiagResult<Self>
+  }
+
+  interface WriteHandler<T> <<trait>> {
+    +handle_write(&mut self, data: T) -> DiagResult<()>
+  }
+
+  interface RoutineHandler<T> <<trait>> {
+    +start(&mut self, params: Option<T>) : DiagResult<Option<T>>
+    +stop(&mut self, params: Option<T>) : DiagResult<Option<T>>
+    +results(&self) : DiagResult<Option<T>>
+    +completion_percentage(&self) : Option<u8>
+  }
+
+  class "SerializedReadDataByIdentifier<T>" {
+    where T: UdsSerialize + Send + 'static
+    +new(data: T) : Self
+    +read(&self) -> DiagResult<ByteVector>
+  }
+
+  class "SerializedWriteDataByIdentifier<T, H>" {
+    where T: UdsDeserialize + Send + 'static
+    where H: WriteHandler<T> + Send + 'static
+    +new(handler: H) : Self
+    +write(&mut self, data: ByteSlice) -> DiagResult<()>
+  }
+
+  class "SerializedRoutineControl<T, H>" {
+    where T: UdsSerialize + UdsDeserialize + Send + 'static
+    where H: RoutineHandler<T> + Send + 'static
+    +new(handler: H) : Self
+    +start(input: Option<ByteSlice>) : DiagResult<StartRoutine>
+    +stop(input: Option<ByteSlice>) : DiagResult<Option<ByteVector>>
+    +completion_percentage() : Option<u8>
+  }
+
+  class SerializationHelper {
+    +serialize_response<T: UdsSerialize>(payload: &T) -> DiagResult<ByteVector>
+    +deserialize_request<T: UdsDeserialize, F>(data: ByteSlice, handler: F) -> DiagResult<()>
   }
 }
 
@@ -444,12 +491,13 @@ package uds_adapters {
     DiagResult<T> = ::common::Result<T>
   end note
 
-  enum DataResourceAdapter <<enum>> {
-    RDBI(Box<dyn ReadDataByIdentifier + Send>)
-    WDBI(Box<dyn WriteDataByIdentifier + Send>)
+  class DataResourceAdapter {
+    -rdbi : Option<Box<dyn ReadDataByIdentifier + Send + Sync>>
+    -wdbi : Option<Box<dyn WriteDataByIdentifier + Send + Sync>>
     --
-    +{static} from_rdbi(rdbi: impl ReadDataByIdentifier) : Self
-    +{static} from_wdbi(wdbi: impl WriteDataByIdentifier) : Self
+    +{static} new() : Self
+    +with_rdbi(rdbi: impl ReadDataByIdentifier) : Self
+    +with_wdbi(wdbi: impl WriteDataByIdentifier) : Self
   }
 
   class RoutineControlAdapter {
@@ -518,9 +566,21 @@ uds.RoutineControl ..> uds.StartRoutine
 uds.StartRoutine ..> common.uds.NegativeResponseCode
 
 uds_adapters.DataResourceAdapter --|> data_resource.DataResource : <<implements>>
-uds_adapters.DataResourceAdapter *-- uds.ReadDataByIdentifier : RDBI
-uds_adapters.DataResourceAdapter *-- uds.WriteDataByIdentifier : WDBI
+uds_adapters.DataResourceAdapter *-- uds.ReadDataByIdentifier : rdbi
+uds_adapters.DataResourceAdapter *-- uds.WriteDataByIdentifier : wdbi
 uds_adapters.RoutineControlAdapter --|> simple_operation.SimpleOperation : <<implements>>
 uds_adapters.RoutineControlAdapter *-- uds.RoutineControl
+
+uds.SerializedReadDataByIdentifier --|> uds.ReadDataByIdentifier : <<implements>>
+uds.SerializedReadDataByIdentifier ..> uds.UdsSerialize : uses
+uds.SerializedWriteDataByIdentifier --|> uds.WriteDataByIdentifier : <<implements>>
+uds.SerializedWriteDataByIdentifier ..> uds.UdsDeserialize : uses
+uds.SerializedWriteDataByIdentifier ..> uds.WriteHandler : uses
+uds.SerializedRoutineControl --|> uds.RoutineControl : <<implements>>
+uds.SerializedRoutineControl ..> uds.UdsSerialize : uses
+uds.SerializedRoutineControl ..> uds.UdsDeserialize : uses
+uds.SerializedRoutineControl ..> uds.RoutineHandler : uses
+uds.SerializationHelper ..> uds.UdsSerialize : uses
+uds.SerializationHelper ..> uds.UdsDeserialize : uses
 
 @enduml

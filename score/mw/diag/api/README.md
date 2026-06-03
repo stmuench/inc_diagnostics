@@ -11,7 +11,7 @@ At a high level, the intended usage pattern is:
 3. Let the runtime manage them internally as SOVD-style data resources or operations.
 4. Optionally reuse the provided UDS adapters instead of writing the higher-level SOVD-facing wrappers yourself.
 
-The examples in [../examples/examples.rs](../examples/examples.rs) demonstrate some patterns end to end.
+The examples in [../example/example.rs](../example/example.rs) demonstrate some patterns end to end.
 
 ## API Surface
 
@@ -27,6 +27,7 @@ The most relevant building blocks are:
 - `Operation`: full SOVD operation interface with execution control support
 - `SimpleOperation`: simplified operation interface only requiring start and stop semantics
 - `ReadDataByIdentifier`, `WriteDataByIdentifier`, `RoutineControl`: UDS-specific traits
+- `UdsSerialize`, `UdsDeserialize`: traits for UDS binary serialization
 - `DataResourceAdapter`, `RoutineControlAdapter`, `SimpleOperationAdapter`: bridge types that adapt UDS or simplified implementations to the runtime-facing API
 
 ## Common Payload and Error Types
@@ -90,7 +91,7 @@ For simple synchronous operations, use `from_closure(|| { ... })` where the clos
 The minimum implementation only needs `read`. The default `write` implementation rejects writes and therefore makes the resource read-only.
 
 ```rust
-use diag_api::sovd::data_resource::{DataResource, DataError, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
+use diag_api::sovd::data_resource::{DataResource, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
 use diag_api::{ReplyMessageEncoding, ReplyMessagePayload, Result as DiagResult};
 
 struct BuildInfoResource {
@@ -102,10 +103,10 @@ impl DataResource for BuildInfoResource {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
 
         let version = self.version.clone();
-        ReadValueHandle::from_closure(move || ReadValueReply {
+        ReadValueHandle::from_closure(move || Ok(ReadValueReply {
             data: ReplyMessagePayload::from_string(version),
             errors: None,
-        })
+        }))
     }
 }
 ```
@@ -115,37 +116,57 @@ impl DataResource for BuildInfoResource {
 Implement `write` only when the value is actually writable:
 
 ```rust
-use diag_api::sovd::data_resource::{DataError, DataResource, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
+use diag_api::sovd::{DataError};
+use diag_api::sovd::data_resource::{DataResource, ReadValueHandle, ReadValueArgs, ReadValueReply, WriteValueHandle, WriteValueArgs};
 use diag_api::{RequestMessagePayload, ReplyMessagePayload, Result as DiagResult};
+use serde::{Deserialize, Serialize};
 
+#[derive(Serialize, Deserialize)]
 struct WritableFlag {
     enabled: bool,
 }
 
 impl DataResource for WritableFlag {
     fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
-        ReadValueHandle::ready(ReadValueReply {
-            data: ReplyMessagePayload::from_string(self.enabled.to_string()),
-            errors: None,
-        })
+        match serde_json::to_value(self) {
+            Ok(json) => ReadValueHandle::ready(ReadValueReply {
+                data: ReplyMessagePayload::from_json(json, None),
+                errors: None,
+            }),
+            Err(e) => ReadValueHandle::from_error(diag_api::Error::from_error(
+                diag_api::sovd::GenericError::from_code(
+                    diag_api::sovd::ErrorCode::InvalidResponseContent,
+                    e.to_string(),
+                ),
+            )),
+        }
     }
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
-        match input.user_data {
-            Some(RequestMessagePayload::UTF8(value)) if value == "true" => {
-                self.enabled = true;
-                WriteValueHandle::ready()
+        if let Some(RequestMessagePayload::JSON(json)) = input.user_data {
+            match serde_json::from_value::<WritableFlag>(json) {
+                Ok(update) => {
+                    self.enabled = update.enabled;
+                    WriteValueHandle::ready()
+                }
+                Err(e) => WriteValueHandle::from_error(
+                    DataError::new("/user_data".to_string()).with_error(
+                        diag_api::sovd::GenericError::from_code(
+                            diag_api::sovd::ErrorCode::InvalidResponseContent,
+                            e.to_string(),
+                        ),
+                    ),
+                ),
             }
-            Some(RequestMessagePayload::UTF8(value)) if value == "false" => {
-                self.enabled = false;
-                WriteValueHandle::ready()
-            }
-            _ => WriteValueHandle::from_error(DataError::new(
-                "/data/x".to_string()
-            ).with_error(diag_api::sovd::GenericError::from_code(
-                diag_api::sovd::ErrorCode::IncompleteRequest,
-                "expected a UTF-8 boolean payload".to_string(),
-            )))
+        } else {
+            WriteValueHandle::from_error(
+                DataError::new("/user_data".to_string()).with_error(
+                    diag_api::sovd::GenericError::from_code(
+                        diag_api::sovd::ErrorCode::IncompleteRequest,
+                        "expected JSON payload".to_string(),
+                    ),
+                ),
+            )
         }
     }
 }
@@ -202,14 +223,14 @@ impl Operation for PingOperation {
     ) -> DiagResult<ExecutionHandle> {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
 
-        ExecutionHandle::from_closure(|| {
+        Ok(ExecutionHandle::from_closure(|| {
             Ok(DiagnosticReply {
                 message_payload: Some(ReplyMessagePayload::from_string(
                     "pong".to_string(),
                 )),
                 additional_attrs: None,
             })
-        })
+        }))
     }
 }
 ```
@@ -234,6 +255,7 @@ use diag_api::sovd::operation::{
     ExecutionStatus, ExecutionStatusDetails, Operation,
 };
 use diag_api::{DiagnosticReply, Error, ReplyMessagePayload, Result as DiagResult};
+use futures::StreamExt;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Notify;
 
@@ -266,7 +288,7 @@ impl AsyncOperation {
     }
 
     async fn exec_control(
-        mut control: ExecutionControl,
+        mut control: Box<dyn ExecutionControl>,
         exec_status: Arc<Mutex<ExecutionStatus>>,
         resume_signal: Arc<Notify>,
     ) {
@@ -278,7 +300,7 @@ impl AsyncOperation {
             match exec_event.kind {
                 ExecutionEventKind::ControlGone => break,
                 ExecutionEventKind::ReportStatus => {
-                    let current_status = *exec_status.lock().unwrap();
+                    let current_status = exec_status.lock().unwrap().clone();
                     exec_event
                         .status_reporter
                         .put(current_status, ExecutionStatusDetails::default());
@@ -295,7 +317,9 @@ impl AsyncOperation {
                         }
                         _ => {
                             let mut status = exec_status.lock().unwrap();
-                            *status = ExecutionStatus::UnsupportedCapability;
+                            *status = ExecutionStatus::UnsupportedCapability(
+                                last_exec_event_kind.to_string(),
+                            );
                         }
                     }
                 }
@@ -313,7 +337,7 @@ impl Operation for AsyncOperation {
         let exec_status = Arc::new(Mutex::new(ExecutionStatus::Running));
         let resume_signal = Arc::new(Notify::new());
 
-        ExecutionHandle::from_future(async move {
+        Ok(ExecutionHandle::from_future(async move {
             tokio::select! {
                 result = Self::user_code(
                     input,
@@ -327,7 +351,7 @@ impl Operation for AsyncOperation {
                     ),
                 )),
             }
-        })
+        }))
     }
 }
 ```
@@ -357,14 +381,14 @@ struct EraseOperation;
 
 impl SimpleOperation for EraseOperation {
     fn start(&mut self, _input: ExecuteArguments) -> DiagResult<ExecutionHandle> {
-        ExecutionHandle::from_closure(|| {
+        Ok(ExecutionHandle::from_closure(|| {
             Ok(DiagnosticReply {
                 message_payload: Some(ReplyMessagePayload::from_string(
                     "erase finished".to_string(),
                 )),
                 additional_attrs: None,
             })
-        })
+        }))
     }
 
     fn stop(&mut self, _input: Option<ExecuteArguments>) -> DiagResult<Option<DiagnosticReply>> {
@@ -408,7 +432,7 @@ impl ReadDataByIdentifier for VinDid {
     }
 }
 
-let resource = DataResourceAdapter::from_rdbi(VinDid);
+let resource = DataResourceAdapter::new().with_rdbi(VinDid);
 ```
 
 Important adapter constraints:
@@ -459,7 +483,7 @@ let operation = SimpleOperationAdapter::new(RoutineControlAdapter::new(MyRoutine
 
 ## Registering Implementations at the Runtime
 
-The example test code in [../examples/examples.rs](../examples/examples.rs) shows the expected runtime integration point:
+The example test code in [../example/example.rs](../example/example.rs) shows the expected runtime integration point:
 
 ```rust
 use diag_api::sovd::data_resource::{DataCategory, DataResourceMetadata};
@@ -497,6 +521,48 @@ entity.register_operation(
 ```
 
 That registration step is the boundary between user-owned diagnostic logic and runtime-owned transport, scheduling, and execution management.
+
+## Serialization and Deserialization
+
+### SOVD (JSON)
+
+Use serde derives with `serde_json::to_value()` / `serde_json::from_value()`.
+
+### UDS (Binary)
+
+Implement `UdsSerialize` and `UdsDeserialize` for custom binary encoding:
+
+```rust,ignore
+use diag_api::uds::{UdsDeserialize, UdsSerialize};
+use diag_api::Result as DiagResult;
+
+struct VehicleSpeed {
+    value: u16,
+}
+
+impl UdsSerialize for VehicleSpeed {
+    fn serialize(&self) -> DiagResult<Vec<u8>> {
+        Ok(self.value.to_be_bytes().to_vec())
+    }
+}
+
+impl UdsDeserialize for VehicleSpeed {
+    fn deserialize(data: &[u8]) -> DiagResult<Self> {
+        if data.len() < 2 {
+            return Err(diag_api::Error::from_nrc(
+                diag_api::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+            ));
+        }
+        Ok(Self { value: u16::from_be_bytes([data[0], data[1]]) })
+    }
+}
+```
+
+Use `Serialized*` adapters to combine serialization with UDS traits:
+
+- `SerializedReadDataByIdentifier<T>` — `T: UdsSerialize`
+- `SerializedWriteDataByIdentifier<T, H>` — `T: UdsDeserialize`, `H: WriteHandler<T>`
+- `SerializedRoutineControl<T, H>` — `T: UdsSerialize + UdsDeserialize`, `H: RoutineHandler<T>`
 
 ## Operation Metadata Semantics
 
@@ -574,11 +640,11 @@ Use the UDS traits and adapters when:
 
 ## Reference Files
 
-For the concrete implementations which the above guide described, see:
+For concrete implementations which the above guide described, see:
 
+- [../example/example.rs](../example/example.rs)
 - [data_resource.rs](../api/data_resource.rs)
 - [operation.rs](../api/operation.rs)
 - [simple_operation.rs](../api/simple_operation.rs)
 - [uds.rs](../api/uds.rs)
 - [uds_adapters.rs](../api/uds_adapters.rs)
-- [../examples/examples.rs](../examples/examples.rs)
