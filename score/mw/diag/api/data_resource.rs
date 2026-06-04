@@ -17,6 +17,9 @@ use common::{
     KeyValueAttributes, ReplyMessageEncoding, ReplyMessagePayload, RequestMessagePayload,
 };
 
+use std::future::Future;
+use std::pin::Pin;
+
 /*******************/
 /* General Types   */
 /*******************/
@@ -73,6 +76,7 @@ pub mod sovd {
         pub id: String,
         pub name: String,
         pub translation_id: Option<String>,
+        pub read_only: bool,
         pub category: DataCategory,
         pub groups: Option<Vec<String>>,
     }
@@ -91,7 +95,7 @@ pub struct ReadValueArgs {
 
 impl ReadValueArgs {
     #[must_use]
-    pub fn from(encoding: ReplyMessageEncoding) -> Self {
+    pub fn new(encoding: ReplyMessageEncoding) -> Self {
         Self {
             reply_encoding: encoding,
             additional_attrs: None,
@@ -108,17 +112,88 @@ impl ReadValueArgs {
 /// cf. ISO 17978-3:2025 Section 7.9.3.2, Table 85
 #[derive(Debug)]
 pub struct ReadValueReply {
-    pub id: Option<String>,
     pub data: ReplyMessagePayload,
     pub errors: Option<Vec<DataError>>,
+}
+
+/// Internal design pattern supporting both synchronous and asynchronous read of data resources.
+/// `ReadValueHandle` enables unified handling of immediate results via `Ready` or deferred
+/// async read of a data resource via `Pending`.
+pub enum ReadValueHandle {
+    Ready(DiagResult<ReadValueReply>),
+    Pending(Pin<Box<dyn Future<Output = DiagResult<ReadValueReply>> + Send>>),
+}
+
+impl ReadValueHandle {
+    #[must_use]
+    pub fn ready(reply: ReadValueReply) -> Self {
+        Self::Ready(Ok(reply))
+    }
+
+    #[must_use]
+    pub fn from_error(err: common::Error) -> Self {
+        Self::Ready(Err(err))
+    }
+
+    #[must_use]
+    pub fn from_future<Fut>(future: Fut) -> Self
+    where
+        Fut: Future<Output = DiagResult<ReadValueReply>> + Send + 'static,
+    {
+        Self::Pending(Box::pin(future))
+    }
+
+    #[must_use]
+    pub fn from_closure<Func>(func: Func) -> Self
+    where
+        Func: FnOnce() -> DiagResult<ReadValueReply> + Send + 'static,
+    {
+        Self::Pending(Box::pin(async move { func() }))
+    }
 }
 
 /// cf. ISO 17978-3:2025 Section 7.9.5.1, Table 99
 #[derive(Debug, Default)]
 pub struct WriteValueArgs {
-    pub signature: Option<String>,
     pub user_data: Option<RequestMessagePayload>,
+    pub user_data_signature: Option<String>,
     pub additional_attrs: Option<KeyValueAttributes>,
+}
+
+/// Internal design pattern supporting both synchronous and asynchronous write of data resources.
+/// `WriteValueHandle` enables unified handling of immediate results via `Ready` or deferred
+/// async write of a data resource via `Pending`.
+pub enum WriteValueHandle {
+    Ready(Result<(), DataError>),
+    Pending(Pin<Box<dyn Future<Output = Result<(), DataError>> + Send>>),
+}
+
+impl WriteValueHandle {
+    #[must_use]
+    pub fn ready() -> Self {
+        Self::Ready(Ok(()))
+    }
+
+    #[must_use]
+    pub fn from_error(err: DataError) -> Self {
+        Self::Ready(Err(err))
+    }
+
+    #[must_use]
+    pub fn from_future<Fut>(future: Fut) -> Self
+    where
+        Fut: Future<Output = Result<(), DataError>> + Send + 'static,
+    {
+        Self::Pending(Box::pin(future))
+    }
+
+    #[must_use]
+    pub fn from_closure<Func>(func: Func) -> Self
+    where
+        Func: FnOnce() -> Result<(), DataError> + Send + 'static,
+    {
+        Self::Pending(Box::pin(async move { func() }))
+    }
 }
 
 /*************************/
@@ -132,13 +207,13 @@ pub struct WriteValueArgs {
 pub trait DataResource {
     /// Read the current value of this data resource.
     /// i.e. GET /{entity-path}/data/{data-id}
-    fn read(&self, input: ReadValueArgs) -> DiagResult<ReadValueReply>;
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle;
 
     /// Write a new value to this data resource.
     /// i.e. PUT /{entity-path}/data/{data-id}
     /// The default implementation returns an error indicating that this data resource is read-only.
-    fn write(&mut self, _input: WriteValueArgs) -> Result<(), DataError> {
-        Err(DataError::from_error(GenericError::from_code(
+    fn write(&mut self, _input: WriteValueArgs) -> WriteValueHandle {
+        WriteValueHandle::from_error(DataError::from_error(GenericError::from_code(
             common::sovd::ErrorCode::PreconditionNotFulfilled,
             "This data resource cannot be written to since it is a read-only one!".to_string(),
         )))
@@ -152,7 +227,6 @@ pub trait DataResource {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use common::Result as DiagResult;
     use sovd::DataCategory;
 
     // ── DataCategory Display ───────────────────────────────────────────
@@ -214,9 +288,8 @@ mod tests {
     struct ReadOnlyResource;
 
     impl DataResource for ReadOnlyResource {
-        fn read(&self, _input: ReadValueArgs) -> DiagResult<ReadValueReply> {
-            Ok(ReadValueReply {
-                id: None,
+        fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
+            ReadValueHandle::ready(ReadValueReply {
                 data: ReplyMessagePayload::UTF8("foo".to_string()),
                 errors: None,
             })
@@ -227,12 +300,16 @@ mod tests {
     #[test]
     fn default_write_returns_precondition_error() {
         let mut res = ReadOnlyResource;
-        let result = res.write(WriteValueArgs::default());
-        let err = result.unwrap_err();
-        assert_eq!(
-            err.error.as_ref().unwrap().sovd_error,
-            "precondition-not-fulfilled"
-        );
+        let handle = res.write(WriteValueArgs::default());
+        match handle {
+            WriteValueHandle::Ready(Err(err)) => {
+                assert_eq!(
+                    err.error.as_ref().unwrap().sovd_error,
+                    "precondition-not-fulfilled"
+                );
+            }
+            _ => panic!("expected Ready(Err(..))"),
+        }
     }
 
     // ── DataResource read ──────────────────────────────────────────────
@@ -240,11 +317,14 @@ mod tests {
     #[test]
     fn data_resource_read_returns_reply() {
         let res = ReadOnlyResource;
-        let input = ReadValueArgs::from(ReplyMessageEncoding::UTF8);
-        let reply = res.read(input).unwrap();
-        assert!(reply.id.is_none());
-        assert_eq!(reply.data, ReplyMessagePayload::UTF8("foo".to_string()));
-        assert!(reply.errors.is_none());
+        let input = ReadValueArgs::new(ReplyMessageEncoding::UTF8);
+        match res.read(input) {
+            ReadValueHandle::Ready(Ok(reply)) => {
+                assert_eq!(reply.data, ReplyMessagePayload::UTF8("foo".to_string()));
+                assert!(reply.errors.is_none());
+            }
+            _ => panic!("expected Ready(Ok(..))"),
+        }
     }
 
     // ── DataResource with custom write ─────────────────────────────────
@@ -252,32 +332,41 @@ mod tests {
     struct WritableResource;
 
     impl DataResource for WritableResource {
-        fn read(&self, _input: ReadValueArgs) -> DiagResult<ReadValueReply> {
-            Ok(ReadValueReply {
-                id: Some("res-1".to_string()),
-                data: ReplyMessagePayload::from_json(serde_json::json!({"val": 42})),
+        fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
+            ReadValueHandle::ready(ReadValueReply {
+                data: ReplyMessagePayload::from_json(serde_json::json!({"val": 42}), None),
                 errors: None,
             })
         }
 
-        fn write(&mut self, _input: WriteValueArgs) -> Result<(), DataError> {
-            Ok(())
+        fn write(&mut self, _input: WriteValueArgs) -> WriteValueHandle {
+            WriteValueHandle::ready()
         }
     }
 
     #[test]
     fn writable_resource_write_succeeds() {
         let mut res = WritableResource;
-        let result = res.write(WriteValueArgs::default());
-        assert!(result.is_ok());
+        let handle = res.write(WriteValueArgs::default());
+        match handle {
+            WriteValueHandle::Ready(Ok(())) => {}
+            _ => panic!("expected Ready(Ok(()))"),
+        }
     }
 
     #[test]
-    fn writable_resource_read_with_id() {
+    fn writable_resource_read_with_json_encoding() {
         let res = WritableResource;
-        let input = ReadValueArgs::from(ReplyMessageEncoding::JSON(common::JsonSchemaRequired::No));
-        let reply = res.read(input).unwrap();
-        assert_eq!(reply.id.as_deref(), Some("res-1"));
+        let input = ReadValueArgs::new(ReplyMessageEncoding::JSON(common::JsonSchemaRequired::No));
+        match res.read(input) {
+            ReadValueHandle::Ready(Ok(reply)) => {
+                assert_eq!(
+                    reply.data,
+                    ReplyMessagePayload::from_json(serde_json::json!({"val": 42}), None)
+                );
+            }
+            _ => panic!("expected Ready(Ok(..))"),
+        }
     }
 
     // ── ReadValueArgs ──────────────────────────────────────────────────
@@ -286,7 +375,7 @@ mod tests {
     fn read_value_args_with_attrs() {
         let mut attrs = KeyValueAttributes::new();
         attrs.insert("Accept".to_string(), "application/json".to_string());
-        let args = ReadValueArgs::from(ReplyMessageEncoding::JSON(common::JsonSchemaRequired::Yes))
+        let args = ReadValueArgs::new(ReplyMessageEncoding::JSON(common::JsonSchemaRequired::Yes))
             .with_additional_attrs(attrs);
         assert!(args.additional_attrs.is_some());
         assert_eq!(
@@ -299,23 +388,20 @@ mod tests {
 
     #[test]
     fn read_value_reply_with_errors() {
-        let err = DataError::from_path("/data/x".to_string()).with_error(GenericError::from_code(
+        let err = DataError::new("/data/x".to_string()).with_error(GenericError::from_code(
             common::sovd::ErrorCode::ErrorResponse,
             "bad".to_string(),
         ));
         let reply = ReadValueReply {
-            id: Some("data-1".to_string()),
             data: ReplyMessagePayload::from_byte_vector(vec![0xFF]),
             errors: Some(vec![err]),
         };
-        assert_eq!(reply.id.as_deref(), Some("data-1"));
         assert_eq!(reply.errors.as_ref().unwrap().len(), 1);
     }
 
     #[test]
     fn read_value_reply_debug() {
         let reply = ReadValueReply {
-            id: None,
             data: ReplyMessagePayload::from_string("test".to_string()),
             errors: None,
         };
@@ -328,7 +414,7 @@ mod tests {
     #[test]
     fn write_value_args_default() {
         let args = WriteValueArgs::default();
-        assert!(args.signature.is_none());
+        assert!(args.user_data_signature.is_none());
         assert!(args.user_data.is_none());
         assert!(args.additional_attrs.is_none());
     }
@@ -338,11 +424,11 @@ mod tests {
         let mut attrs = KeyValueAttributes::new();
         attrs.insert("auth".to_string(), "token".to_string());
         let args = WriteValueArgs {
-            signature: Some("sig-abc".to_string()),
+            user_data_signature: Some("sig-abc".to_string()),
             user_data: Some(RequestMessagePayload::JSON(serde_json::json!({"v": 1}))),
             additional_attrs: Some(attrs),
         };
-        assert_eq!(args.signature.as_deref(), Some("sig-abc"));
+        assert_eq!(args.user_data_signature.as_deref(), Some("sig-abc"));
         assert!(args.user_data.is_some());
         assert!(args.additional_attrs.is_some());
     }
@@ -404,6 +490,7 @@ mod tests {
             id: "dr-1".to_string(),
             name: "Battery Voltage".to_string(),
             translation_id: None,
+            read_only: true,
             category: DataCategory::CurrentData,
             groups: None,
         };
@@ -419,11 +506,12 @@ mod tests {
         let meta = sovd::DataResourceMetadata {
             id: "dr-2".to_string(),
             name: "ECU Serial".to_string(),
-            translation_id: Some("trans-ecu".to_string()),
+            translation_id: Some("dummy".to_string()),
+            read_only: false,
             category: DataCategory::IdentData,
             groups: Some(vec!["group-a".to_string(), "group-b".to_string()]),
         };
-        assert_eq!(meta.translation_id.as_deref(), Some("trans-ecu"));
+        assert_eq!(meta.translation_id.as_deref(), Some("dummy"));
         assert_eq!(meta.groups.as_ref().unwrap().len(), 2);
     }
 
@@ -433,6 +521,7 @@ mod tests {
             id: "dr-3".to_string(),
             name: "Name".to_string(),
             translation_id: None,
+            read_only: true,
             category: DataCategory::StoredData,
             groups: Some(vec!["g1".to_string()]),
         };
@@ -447,6 +536,7 @@ mod tests {
             id: "dr-4".to_string(),
             name: "Test".to_string(),
             translation_id: None,
+            read_only: false,
             category: DataCategory::SysInfo,
             groups: None,
         };

@@ -83,20 +83,6 @@ pub mod sovd {
             }
         }
 
-        pub fn from_code_with_translation(
-            code: ErrorCode,
-            message: String,
-            translation_id: String,
-        ) -> Self {
-            Self {
-                sovd_error: code.to_string(),
-                message_text: message,
-                vendor_error: None,
-                translation_id: Some(translation_id),
-                additional_attrs: None,
-            }
-        }
-
         pub fn from_vendor_error(error: String, message: String) -> Self {
             Self {
                 sovd_error: ErrorCode::VendorSpecific.to_string(),
@@ -107,28 +93,14 @@ pub mod sovd {
             }
         }
 
-        pub fn from_vendor_error_with_translation(
-            error: String,
-            message: String,
-            translation_id: String,
-        ) -> Self {
-            Self {
-                sovd_error: ErrorCode::VendorSpecific.to_string(),
-                message_text: message,
-                vendor_error: Some(error),
-                translation_id: Some(translation_id),
-                additional_attrs: None,
-            }
+        pub fn with_translation_id(mut self, translation_id: String) -> Self {
+            self.translation_id = Some(translation_id);
+            self
         }
 
-        pub fn add_additional_attr(&mut self, key: String, value: String) {
-            self.additional_attrs
-                .get_or_insert_with(KeyValueAttributes::new)
-                .insert(key, value);
-        }
-
-        pub fn set_additional_attrs(&mut self, attrs: KeyValueAttributes) {
+        pub fn with_additional_attrs(mut self, attrs: KeyValueAttributes) -> Self {
             self.additional_attrs = Some(attrs);
+            self
         }
     }
 
@@ -143,13 +115,16 @@ pub mod sovd {
     }
 
     impl DataError {
-        pub fn from_path(path: String) -> Self {
+        /// According to ISO 17978-3:2025 Section 5.8.3 Table 17, `path` shall contain
+        /// a "JSON Pointer describing which element of the response is erroneous".
+        pub fn new(path: String) -> Self {
             Self {
                 path: path,
                 error: None,
             }
         }
 
+        /// Convenience factory method to create a `DataError` just from `GenericError`.
         pub fn from_error(error: GenericError) -> Self {
             Self {
                 path: String::default(),
@@ -157,6 +132,7 @@ pub mod sovd {
             }
         }
 
+        /// Instance method to enrich a newly created `DataError` with a `GenericError`.
         pub fn with_error(mut self, error: GenericError) -> Self {
             self.error = Some(error);
             self
@@ -167,8 +143,8 @@ pub mod sovd {
 pub mod uds {
 
     /// cf. ISO 14229-1:2020, Table A.1
-    #[repr(u8)]
     #[derive(Clone, Debug, PartialEq)]
+    #[repr(u8)]
     pub enum NegativeResponseCode {
         GeneralReject = 0x10,
         ServiceNotSupported = 0x11,
@@ -226,15 +202,84 @@ pub mod uds {
         TransmissionRangeNotInGear = 0x8D,
         BrakeSwitchOrSwitchesNotClosed = 0x8F,
         ShifterLeverNotInPark = 0x90,
-        TorqueConvertClutchLocked = 0x91,
+        TorqueConverterClutchLocked = 0x91,
         VoltageTooHigh = 0x92,
         VoltageTooLow = 0x93,
+        ResourceTemporarilyNotAvailable = 0x94,
         VehicleManufacturerSpecific(VehicleManufacturerSpecificCNC),
     }
 
     impl NegativeResponseCode {
         pub fn from(cnc: VehicleManufacturerSpecificCNC) -> Self {
             Self::VehicleManufacturerSpecific(cnc)
+        }
+    }
+
+    impl From<NegativeResponseCode> for u8 {
+        fn from(nrc: NegativeResponseCode) -> Self {
+            match nrc {
+                NegativeResponseCode::GeneralReject => 0x10,
+                NegativeResponseCode::ServiceNotSupported => 0x11,
+                NegativeResponseCode::SubFunctionNotSupported => 0x12,
+                NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat => 0x13,
+                NegativeResponseCode::ResponseTooLong => 0x14,
+                NegativeResponseCode::BusyRepeatRequest => 0x21,
+                NegativeResponseCode::ConditionsNotCorrect => 0x22,
+                NegativeResponseCode::NoResponseFromSubnetComponent => 0x23,
+                NegativeResponseCode::RequestSequenceError => 0x24,
+                NegativeResponseCode::NoResponseFromSubNetComponent => 0x25,
+                NegativeResponseCode::FailurePreventsExecutionOfRequestedAction => 0x26,
+                NegativeResponseCode::RequestOutOfRange => 0x31,
+                NegativeResponseCode::SecurityAccessDenied => 0x33,
+                NegativeResponseCode::AuthenticationRequired => 0x34,
+                NegativeResponseCode::InvalidKey => 0x35,
+                NegativeResponseCode::ExceededNumberOfAttempts => 0x36,
+                NegativeResponseCode::RequiredTimeDelayNotExpired => 0x37,
+                NegativeResponseCode::SecureDataTransmissionRequired => 0x38,
+                NegativeResponseCode::SecureDataTransmissionNotAllowed => 0x39,
+                NegativeResponseCode::SecureDataVerificationFailed => 0x3A,
+                NegativeResponseCode::CertificateVerificationFailedInvalidTimePeriod => 0x50,
+                NegativeResponseCode::CertificateVerificationFailedInvalidSignature => 0x51,
+                NegativeResponseCode::CertificateVerificationFailedInvalidChainOfTrust => 0x52,
+                NegativeResponseCode::CertificateVerificationFailedInvalidType => 0x53,
+                NegativeResponseCode::CertificateVerificationFailedInvalidFormat => 0x54,
+                NegativeResponseCode::CertificateVerificationFailedInvalidContent => 0x55,
+                NegativeResponseCode::CertificateVerificationFailedInvalidScope => 0x56,
+                NegativeResponseCode::CertificateVerificationFailedInvalidCertificate => 0x57,
+                NegativeResponseCode::OwnershipVerificationFailed => 0x58,
+                NegativeResponseCode::ChallengeCalculationFailed => 0x59,
+                NegativeResponseCode::SettingAccessRightsFailed => 0x5A,
+                NegativeResponseCode::SessionKeyCreationOrDerivationFailed => 0x5B,
+                NegativeResponseCode::ConfigurationDataUsageFailed => 0x5C,
+                NegativeResponseCode::DeAuthenticationFailed => 0x5D,
+                NegativeResponseCode::UploadDownloadNotAccepted => 0x70,
+                NegativeResponseCode::TransferDataSuspended => 0x71,
+                NegativeResponseCode::GeneralProgrammingFailure => 0x72,
+                NegativeResponseCode::WrongBlockSequenceCounter => 0x73,
+                NegativeResponseCode::RequestCorrectlyReceivedResponsePending => 0x78,
+                NegativeResponseCode::SubFunctionNotSupportedInActiveSession => 0x7E,
+                NegativeResponseCode::ServiceNotSupportedInActiveSession => 0x7F,
+                NegativeResponseCode::RpmTooHigh => 0x81,
+                NegativeResponseCode::RpmTooLow => 0x82,
+                NegativeResponseCode::EngineIsRunning => 0x83,
+                NegativeResponseCode::EngineIsNotRunning => 0x84,
+                NegativeResponseCode::EngineRunTimeTooLow => 0x85,
+                NegativeResponseCode::TemperatureTooHigh => 0x86,
+                NegativeResponseCode::TemperatureTooLow => 0x87,
+                NegativeResponseCode::VehicleSpeedTooHigh => 0x88,
+                NegativeResponseCode::VehicleSpeedTooLow => 0x89,
+                NegativeResponseCode::ThrottleOrPedalTooHigh => 0x8A,
+                NegativeResponseCode::ThrottleOrPedalTooLow => 0x8B,
+                NegativeResponseCode::TransmissionRangeNotInNeutral => 0x8C,
+                NegativeResponseCode::TransmissionRangeNotInGear => 0x8D,
+                NegativeResponseCode::BrakeSwitchOrSwitchesNotClosed => 0x8F,
+                NegativeResponseCode::ShifterLeverNotInPark => 0x90,
+                NegativeResponseCode::TorqueConverterClutchLocked => 0x91,
+                NegativeResponseCode::VoltageTooHigh => 0x92,
+                NegativeResponseCode::VoltageTooLow => 0x93,
+                NegativeResponseCode::ResourceTemporarilyNotAvailable => 0x94,
+                NegativeResponseCode::VehicleManufacturerSpecific(cnc) => cnc.into(),
+            }
         }
     }
 
@@ -303,13 +348,8 @@ impl ReplyMessagePayload {
     }
 
     #[must_use]
-    pub fn from_json(payload: JsonValue) -> Self {
-        Self::JSON(payload, None)
-    }
-
-    #[must_use]
-    pub fn from_json_and_schema(payload: JsonValue, schema: JsonSchema) -> Self {
-        Self::JSON(payload, Some(schema))
+    pub fn from_json(payload: JsonValue, schema: Option<JsonSchema>) -> Self {
+        Self::JSON(payload, schema)
     }
 
     #[must_use]
@@ -360,10 +400,10 @@ impl Error {
         self
     }
 
-    pub fn mutex_error() -> Self {
+    pub fn mutex_poisoned() -> Self {
         Self::from_error(sovd::GenericError::from_code(
             sovd::ErrorCode::SovdServerFailure,
-            "mutex acquisition failed".to_string(),
+            "mutex acquisition failed unexpectedly".to_string(),
         ))
     }
 }
@@ -508,12 +548,18 @@ mod tests {
     }
 
     #[test]
+    fn generic_error_with_translation_id() {
+        let err =
+            sovd::GenericError::from_code(sovd::ErrorCode::NotResponding, "timeout".to_string())
+                .with_translation_id("tid_123".to_string());
+        assert_eq!(err.translation_id.as_deref(), Some("tid_123"));
+    }
+
+    #[test]
     fn generic_error_from_code_with_translation() {
-        let err = sovd::GenericError::from_code_with_translation(
-            sovd::ErrorCode::IncompleteRequest,
-            "msg".to_string(),
-            "trans_id".to_string(),
-        );
+        let err =
+            sovd::GenericError::from_code(sovd::ErrorCode::IncompleteRequest, "msg".to_string())
+                .with_translation_id("trans_id".to_string());
         assert_eq!(err.sovd_error, "incomplete-request");
         assert_eq!(err.message_text, "msg");
         assert!(err.vendor_error.is_none());
@@ -534,11 +580,9 @@ mod tests {
 
     #[test]
     fn generic_error_from_vendor_error_with_translation() {
-        let err = sovd::GenericError::from_vendor_error_with_translation(
-            "custom-err".to_string(),
-            "msg".to_string(),
-            "tid".to_string(),
-        );
+        let err =
+            sovd::GenericError::from_vendor_error("custom-err".to_string(), "msg".to_string())
+                .with_translation_id("tid".to_string());
         assert_eq!(err.sovd_error, "vendor-specific");
         assert_eq!(err.vendor_error.as_deref(), Some("custom-err"));
         assert_eq!(err.translation_id.as_deref(), Some("tid"));
@@ -547,48 +591,61 @@ mod tests {
     // ── sovd::GenericError additional attrs ────────────────────────────
 
     #[test]
-    fn generic_error_add_additional_attr_creates_map() {
-        let mut err =
-            sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string());
-        assert!(err.additional_attrs.is_none());
-        err.add_additional_attr("key1".to_string(), "val1".to_string());
-        let attrs = err.additional_attrs.as_ref().unwrap();
-        assert_eq!(attrs.get("key1"), Some(&"val1".to_string()));
+    fn generic_error_with_additional_attrs() {
+        let mut attrs = KeyValueAttributes::new();
+        attrs.insert("foo".to_string(), "bar".to_string());
+        let err = sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string())
+            .with_additional_attrs(attrs);
+        let result_attrs = err.additional_attrs.as_ref().unwrap();
+        assert_eq!(result_attrs.get("foo"), Some(&"bar".to_string()));
     }
 
     #[test]
-    fn generic_error_add_additional_attr_appends_to_existing() {
-        let mut err =
-            sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string());
-        err.add_additional_attr("k1".to_string(), "v1".to_string());
-        err.add_additional_attr("k2".to_string(), "v2".to_string());
-        let attrs = err.additional_attrs.as_ref().unwrap();
-        assert_eq!(attrs.len(), 2);
-        assert_eq!(attrs.get("k1"), Some(&"v1".to_string()));
-        assert_eq!(attrs.get("k2"), Some(&"v2".to_string()));
+    fn generic_error_with_additional_attrs_single_entry() {
+        let mut attrs = KeyValueAttributes::new();
+        attrs.insert("key1".to_string(), "val1".to_string());
+        let err = sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string())
+            .with_additional_attrs(attrs);
+        let result_attrs = err.additional_attrs.as_ref().unwrap();
+        assert_eq!(result_attrs.get("key1"), Some(&"val1".to_string()));
     }
 
     #[test]
-    fn generic_error_set_additional_attrs_replaces() {
-        let mut err =
-            sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string());
-        err.add_additional_attr("old".to_string(), "val".to_string());
+    fn generic_error_with_additional_attrs_multiple_entries() {
+        let mut attrs = KeyValueAttributes::new();
+        attrs.insert("k1".to_string(), "v1".to_string());
+        attrs.insert("k2".to_string(), "v2".to_string());
+        let err = sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string())
+            .with_additional_attrs(attrs);
+        let result_attrs = err.additional_attrs.as_ref().unwrap();
+        assert_eq!(result_attrs.len(), 2);
+        assert_eq!(result_attrs.get("k1"), Some(&"v1".to_string()));
+        assert_eq!(result_attrs.get("k2"), Some(&"v2".to_string()));
+    }
+
+    #[test]
+    fn generic_error_with_additional_attrs_replaces() {
+        let mut old_attrs = KeyValueAttributes::new();
+        old_attrs.insert("old".to_string(), "val".to_string());
         let mut new_attrs = KeyValueAttributes::new();
         new_attrs.insert("new_key".to_string(), "new_val".to_string());
-        err.set_additional_attrs(new_attrs);
+        let err = sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string())
+            .with_additional_attrs(old_attrs)
+            .with_additional_attrs(new_attrs);
         let attrs = err.additional_attrs.as_ref().unwrap();
         assert_eq!(attrs.len(), 1);
         assert_eq!(attrs.get("new_key"), Some(&"new_val".to_string()));
         assert!(attrs.get("old").is_none());
     }
 
-    // ── sovd::GenericError Clone ──────────────────────────────────────
+    // ── sovd::GenericError clone ──────────────────────────────────────
 
     #[test]
     fn generic_error_clone() {
-        let mut err =
-            sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string());
-        err.add_additional_attr("k".to_string(), "v".to_string());
+        let mut attrs = KeyValueAttributes::new();
+        attrs.insert("k".to_string(), "v".to_string());
+        let err = sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string())
+            .with_additional_attrs(attrs);
         let cloned = err.clone();
         assert_eq!(cloned.sovd_error, err.sovd_error);
         assert_eq!(cloned.message_text, err.message_text);
@@ -598,18 +655,12 @@ mod tests {
     // ── sovd::DataError ───────────────────────────────────────────────
 
     #[test]
-    fn data_error_from_path_has_none_error() {
-        let data_err = sovd::DataError::from_path("/entity/data/123".to_string());
-        assert_eq!(data_err.path, "/entity/data/123");
-        assert!(data_err.error.is_none());
-    }
-
-    #[test]
-    fn data_error_from_error_has_empty_path() {
+    fn data_error_new_with_path_and_error() {
         let generic_error =
             sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "msg".to_string());
-        let data_err = sovd::DataError::from_error(generic_error);
-        assert!(data_err.path.is_empty());
+        let data_err = sovd::DataError::new("/entity/data/1".to_string()).with_error(generic_error);
+        assert_eq!(data_err.path, "/entity/data/1".to_string());
+        assert!(data_err.error.is_some());
         assert_eq!(
             data_err.error.as_ref().unwrap().sovd_error,
             "error-response"
@@ -617,12 +668,13 @@ mod tests {
     }
 
     #[test]
-    fn data_error_from_path_and_error() {
+    fn data_error_with_lock_broken() {
         let generic_error =
             sovd::GenericError::from_code(sovd::ErrorCode::LockBroken, "locked".to_string());
         let data_err =
-            sovd::DataError::from_path("/entity/data/123".to_string()).with_error(generic_error);
-        assert_eq!(data_err.path, "/entity/data/123");
+            sovd::DataError::new("/entity/data/123".to_string()).with_error(generic_error);
+        assert_eq!(data_err.path, "/entity/data/123".to_string());
+        assert!(data_err.error.is_some());
         assert_eq!(data_err.error.as_ref().unwrap().sovd_error, "lock-broken");
         assert_eq!(data_err.error.as_ref().unwrap().message_text, "locked");
     }
@@ -632,16 +684,51 @@ mod tests {
         let generic_error =
             sovd::GenericError::from_code(sovd::ErrorCode::LockBroken, "locked".to_string());
         let data_err =
-            sovd::DataError::from_path("/entity/data/123".to_string()).with_error(generic_error);
+            sovd::DataError::new("/entity/data/123".to_string()).with_error(generic_error);
         let cloned = data_err.clone();
         assert_eq!(cloned.path, data_err.path);
-        assert_eq!(
-            cloned.error.as_ref().unwrap().sovd_error,
-            data_err.error.as_ref().unwrap().sovd_error
+        assert_eq!(cloned.error, data_err.error);
+    }
+
+    #[test]
+    fn data_error_with_error_builder() {
+        let initial_error =
+            sovd::GenericError::from_code(sovd::ErrorCode::ErrorResponse, "initial".to_string());
+        let data_err = sovd::DataError::new("/path".to_string()).with_error(initial_error);
+        let new_error = sovd::GenericError::from_code(
+            sovd::ErrorCode::PreconditionNotFulfilled,
+            "updated".to_string(),
         );
+        let updated = data_err.with_error(new_error);
+        assert_eq!(updated.path, "/path".to_string());
         assert_eq!(
-            cloned.error.as_ref().unwrap().message_text,
-            data_err.error.as_ref().unwrap().message_text
+            updated.error.as_ref().unwrap().sovd_error,
+            "precondition-not-fulfilled"
+        );
+        assert_eq!(updated.error.as_ref().unwrap().message_text, "updated");
+    }
+
+    #[test]
+    fn data_error_path_only() {
+        let data_err: sovd::DataError = sovd::DataError {
+            path: "/only/path".to_string(),
+            error: None,
+        };
+        assert_eq!(data_err.path, "/only/path".to_string());
+        assert!(data_err.error.is_none());
+    }
+
+    #[test]
+    fn data_error_error_only() {
+        let error = sovd::GenericError::from_code(
+            sovd::ErrorCode::InvalidSignature,
+            "signature invalid".to_string(),
+        );
+        let data_err = sovd::DataError::from_error(error.clone());
+        assert_eq!(data_err.path, String::default());
+        assert_eq!(
+            data_err.error.as_ref().unwrap().sovd_error,
+            "invalid-signature"
         );
     }
 
@@ -724,6 +811,434 @@ mod tests {
             }
         }
         assert!(err.payload.is_none());
+    }
+
+    // ── uds::NegativeResponseCode → u8 conversion ──────────────────────
+
+    #[test]
+    fn nrc_to_u8_general_reject() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::GeneralReject), 0x10);
+    }
+
+    #[test]
+    fn nrc_to_u8_service_not_supported() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ServiceNotSupported), 0x11);
+    }
+
+    #[test]
+    fn nrc_to_u8_sub_function_not_supported() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::SubFunctionNotSupported), 0x12);
+    }
+
+    #[test]
+    fn nrc_to_u8_incorrect_message_length_or_invalid_format() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
+            0x13
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_response_too_long() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ResponseTooLong), 0x14);
+    }
+
+    #[test]
+    fn nrc_to_u8_busy_repeat_request() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::BusyRepeatRequest), 0x21);
+    }
+
+    #[test]
+    fn nrc_to_u8_conditions_not_correct() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ConditionsNotCorrect), 0x22);
+    }
+
+    #[test]
+    fn nrc_to_u8_no_response_from_subnet_component() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::NoResponseFromSubnetComponent),
+            0x23
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_request_sequence_error() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RequestSequenceError), 0x24);
+    }
+
+    #[test]
+    fn nrc_to_u8_no_response_from_sub_net_component() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::NoResponseFromSubNetComponent),
+            0x25
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_failure_prevents_execution() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::FailurePreventsExecutionOfRequestedAction),
+            0x26
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_request_out_of_range() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RequestOutOfRange), 0x31);
+    }
+
+    #[test]
+    fn nrc_to_u8_security_access_denied() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::SecurityAccessDenied), 0x33);
+    }
+
+    #[test]
+    fn nrc_to_u8_authentication_required() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::AuthenticationRequired), 0x34);
+    }
+
+    #[test]
+    fn nrc_to_u8_invalid_key() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::InvalidKey), 0x35);
+    }
+
+    #[test]
+    fn nrc_to_u8_exceeded_number_of_attempts() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ExceededNumberOfAttempts), 0x36);
+    }
+
+    #[test]
+    fn nrc_to_u8_required_time_delay_not_expired() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::RequiredTimeDelayNotExpired),
+            0x37
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_secure_data_transmission_required() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SecureDataTransmissionRequired),
+            0x38
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_secure_data_transmission_not_allowed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SecureDataTransmissionNotAllowed),
+            0x39
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_secure_data_verification_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SecureDataVerificationFailed),
+            0x3A
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_time_period() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidTimePeriod),
+            0x50
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_signature() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidSignature),
+            0x51
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_chain_of_trust() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidChainOfTrust),
+            0x52
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_type() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidType),
+            0x53
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_format() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidFormat),
+            0x54
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_content() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidContent),
+            0x55
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_scope() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidScope),
+            0x56
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_cert_verification_failed_invalid_certificate() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::CertificateVerificationFailedInvalidCertificate),
+            0x57
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_ownership_verification_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::OwnershipVerificationFailed),
+            0x58
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_challenge_calculation_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ChallengeCalculationFailed),
+            0x59
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_setting_access_rights_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SettingAccessRightsFailed),
+            0x5A
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_session_key_creation_or_derivation_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SessionKeyCreationOrDerivationFailed),
+            0x5B
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_configuration_data_usage_failed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ConfigurationDataUsageFailed),
+            0x5C
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_de_authentication_failed() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::DeAuthenticationFailed), 0x5D);
+    }
+
+    #[test]
+    fn nrc_to_u8_upload_download_not_accepted() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::UploadDownloadNotAccepted),
+            0x70
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_transfer_data_suspended() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::TransferDataSuspended), 0x71);
+    }
+
+    #[test]
+    fn nrc_to_u8_general_programming_failure() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::GeneralProgrammingFailure),
+            0x72
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_wrong_block_sequence_counter() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::WrongBlockSequenceCounter),
+            0x73
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_request_correctly_received_response_pending() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::RequestCorrectlyReceivedResponsePending),
+            0x78
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_sub_function_not_supported_in_active_session() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::SubFunctionNotSupportedInActiveSession),
+            0x7E
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_service_not_supported_in_active_session() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ServiceNotSupportedInActiveSession),
+            0x7F
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_rpm_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RpmTooHigh), 0x81);
+    }
+
+    #[test]
+    fn nrc_to_u8_rpm_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::RpmTooLow), 0x82);
+    }
+
+    #[test]
+    fn nrc_to_u8_engine_is_running() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::EngineIsRunning), 0x83);
+    }
+
+    #[test]
+    fn nrc_to_u8_engine_is_not_running() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::EngineIsNotRunning), 0x84);
+    }
+
+    #[test]
+    fn nrc_to_u8_engine_run_time_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::EngineRunTimeTooLow), 0x85);
+    }
+
+    #[test]
+    fn nrc_to_u8_temperature_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::TemperatureTooHigh), 0x86);
+    }
+
+    #[test]
+    fn nrc_to_u8_temperature_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::TemperatureTooLow), 0x87);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_speed_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VehicleSpeedTooHigh), 0x88);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_speed_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VehicleSpeedTooLow), 0x89);
+    }
+
+    #[test]
+    fn nrc_to_u8_throttle_or_pedal_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ThrottleOrPedalTooHigh), 0x8A);
+    }
+
+    #[test]
+    fn nrc_to_u8_throttle_or_pedal_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ThrottleOrPedalTooLow), 0x8B);
+    }
+
+    #[test]
+    fn nrc_to_u8_transmission_range_not_in_neutral() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::TransmissionRangeNotInNeutral),
+            0x8C
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_transmission_range_not_in_gear() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::TransmissionRangeNotInGear),
+            0x8D
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_brake_switch_or_switches_not_closed() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::BrakeSwitchOrSwitchesNotClosed),
+            0x8F
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_shifter_lever_not_in_park() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::ShifterLeverNotInPark), 0x90);
+    }
+
+    #[test]
+    fn nrc_to_u8_torque_converter_clutch_locked() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::TorqueConverterClutchLocked),
+            0x91
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_voltage_too_high() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VoltageTooHigh), 0x92);
+    }
+
+    #[test]
+    fn nrc_to_u8_voltage_too_low() {
+        assert_eq!(u8::from(uds::NegativeResponseCode::VoltageTooLow), 0x93);
+    }
+
+    #[test]
+    fn nrc_to_u8_resource_temporarily_not_available() {
+        assert_eq!(
+            u8::from(uds::NegativeResponseCode::ResourceTemporarilyNotAvailable),
+            0x94
+        );
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_lower_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF0);
+        let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+        assert_eq!(u8::from(nrc), 0xF0);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_upper_bound() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xFE);
+        let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+        assert_eq!(u8::from(nrc), 0xFE);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_mid_range() {
+        let cnc = uds::VehicleManufacturerSpecificCNC::from(0xF7);
+        let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+        assert_eq!(u8::from(nrc), 0xF7);
+    }
+
+    #[test]
+    fn nrc_to_u8_vehicle_manufacturer_specific_roundtrip_all() {
+        for val in 0xF0..=0xFE {
+            let cnc = uds::VehicleManufacturerSpecificCNC::from(val);
+            let nrc = uds::NegativeResponseCode::VehicleManufacturerSpecific(cnc);
+            assert_eq!(u8::from(nrc), val);
+        }
     }
 
     // ── RequestMessagePayload ─────────────────────────────────────────
@@ -863,15 +1378,15 @@ mod tests {
     #[test]
     fn reply_message_payload_from_json() {
         let json_val = serde_json::json!({"a": 1});
-        let payload = ReplyMessagePayload::from_json(json_val.clone());
+        let payload = ReplyMessagePayload::from_json(json_val.clone(), None);
         assert_eq!(payload, ReplyMessagePayload::JSON(json_val, None));
     }
 
     #[test]
-    fn reply_message_payload_from_json_and_schema() {
+    fn reply_message_payload_from_json_with_schema() {
         let json_val = serde_json::json!({"a": 1});
         let schema = serde_json::json!({"type": "object"});
-        let payload = ReplyMessagePayload::from_json_and_schema(json_val.clone(), schema.clone());
+        let payload = ReplyMessagePayload::from_json(json_val.clone(), Some(schema.clone()));
         assert_eq!(payload, ReplyMessagePayload::JSON(json_val, Some(schema)));
     }
 
@@ -1044,11 +1559,11 @@ mod tests {
 
     #[test]
     fn error_mutex_error() {
-        let err = Error::mutex_error();
+        let err = Error::mutex_poisoned();
         match &err.code {
             ErrorCode::SOVD(inner) => {
                 assert_eq!(inner.sovd_error, "sovd-server-failure");
-                assert_eq!(inner.message_text, "mutex acquisition failed");
+                assert_eq!(inner.message_text, "mutex acquisition failed unexpectedly");
             }
             _ => {
                 panic!("expected SOVD error code");

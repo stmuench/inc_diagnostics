@@ -13,7 +13,9 @@
 
 use common::Result as DiagResult;
 use common::*;
-use data_resource::{DataResource, ReadValueArgs, ReadValueReply, WriteValueArgs};
+use data_resource::{
+    DataResource, ReadValueArgs, ReadValueHandle, ReadValueReply, WriteValueArgs, WriteValueHandle,
+};
 use operation::{ExecuteArguments, ExecutionHandle};
 use simple_operation::SimpleOperation;
 
@@ -22,76 +24,97 @@ use simple_operation::SimpleOperation;
 /// Bridges UDS diagnostic services (ReadDataByIdentifier / WriteDataByIdentifier)
 /// to the protocol-agnostic [`DataResource`](super::DataResource) trait.
 
-/// A UDS data resource backed by either a read or write service.
-pub enum DataResourceAdapter {
-    /// Read-only data resource via ReadDataByIdentifier (0x22).
-    RDBI(Box<dyn::uds::ReadDataByIdentifier + Send>),
-    /// Write-only data resource via WriteDataByIdentifier (0x2E).
-    WDBI(Box<dyn::uds::WriteDataByIdentifier + Send>),
+/// A UDS data resource backed by either a read or write service, or both.
+pub struct DataResourceAdapter {
+    /// Optional read service via ReadDataByIdentifier (0x22).
+    rdbi: Option<Box<dyn ::uds::ReadDataByIdentifier + Send + Sync>>,
+    /// Optional write service via WriteDataByIdentifier (0x2E).
+    wdbi: Option<Box<dyn ::uds::WriteDataByIdentifier + Send + Sync>>,
 }
 
 impl DataResourceAdapter {
     #[must_use]
-    pub fn from_rdbi(rdbi: impl ::uds::ReadDataByIdentifier + Send + 'static) -> Self {
-        Self::RDBI { 0: Box::new(rdbi) }
+    pub fn new() -> Self {
+        Self {
+            rdbi: None,
+            wdbi: None,
+        }
     }
 
     #[must_use]
-    pub fn from_wdbi(rdbi: impl ::uds::WriteDataByIdentifier + Send + 'static) -> Self {
-        Self::WDBI { 0: Box::new(rdbi) }
+    pub fn with_rdbi(
+        mut self,
+        rdbi: impl ::uds::ReadDataByIdentifier + Send + Sync + 'static,
+    ) -> Self {
+        self.rdbi = Some(Box::new(rdbi));
+        self
+    }
+
+    #[must_use]
+    pub fn with_wdbi(
+        mut self,
+        wdbi: impl ::uds::WriteDataByIdentifier + Send + Sync + 'static,
+    ) -> Self {
+        self.wdbi = Some(Box::new(wdbi));
+        self
     }
 }
 
 impl DataResource for DataResourceAdapter {
-    fn read(&self, input: ReadValueArgs) -> DiagResult<ReadValueReply> {
-        match self {
-            Self::RDBI(rdbi) => match input.reply_encoding {
-                ReplyMessageEncoding::Binary => {
-                    let data = rdbi.read()?;
-                    Ok(ReadValueReply {
-                        id: None,
-                        data: ReplyMessagePayload::from_byte_vector(data.to_vec()),
-                        errors: None,
-                    })
-                }
-                _ => Err(Error::from_error(sovd::GenericError::from_code(
-                    sovd::ErrorCode::PreconditionNotFulfilled,
-                    "UDS WriteDataByIdentifier only supports binary encoding for its reply!"
-                        .to_string(),
-                ))),
-            },
-            Self::WDBI(_) => Err(Error::from_error(sovd::GenericError::from_code(
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle {
+        let Some(rdbi) = &self.rdbi else {
+            return ReadValueHandle::from_error(Error::from_error(sovd::GenericError::from_code(
                 sovd::ErrorCode::PreconditionNotFulfilled,
-                "UDS WriteDataByIdentifier does not permit any read operation!".to_string(),
+                "No ReadDataByIdentifier service got registered for this data resource!"
+                    .to_string(),
+            )));
+        };
+        match input.reply_encoding {
+            ReplyMessageEncoding::Binary => match rdbi.read() {
+                Ok(data) => ReadValueHandle::ready(ReadValueReply {
+                    data: ReplyMessagePayload::from_byte_vector(data.to_vec()),
+                    errors: None,
+                }),
+                Err(e) => ReadValueHandle::from_error(e),
+            },
+            _ => ReadValueHandle::from_error(Error::from_error(sovd::GenericError::from_code(
+                sovd::ErrorCode::PreconditionNotFulfilled,
+                "This data resource only supports binary encoding for its reply data!".to_string(),
             ))),
         }
     }
 
-    fn write(&mut self, input: WriteValueArgs) -> std::result::Result<(), sovd::DataError> {
-        match self {
-            Self::RDBI(_) => Err(sovd::DataError::from_error(sovd::GenericError::from_code(
-                sovd::ErrorCode::PreconditionNotFulfilled,
-                "UDS ReadDataByIdentifier does not permit any write operation!".to_string(),
-            ))),
-            Self::WDBI(wdbi) => {
-                if let Some(RequestMessagePayload::Binary(data)) = input.user_data {
-                    wdbi.write(&data).map_err(|e| sovd::DataError {
-                        path: String::new(),
-                        error: match e.code {
-                            ErrorCode::SOVD(err) => Some(err),
-                            _ => Some(sovd::GenericError::from_code(
-                                sovd::ErrorCode::ErrorResponse,
-                                "Write operation failed".to_string(),
-                            )),
-                        },
-                    })
-                } else {
-                    Err(sovd::DataError::from_error(sovd::GenericError::from_code(
-                        sovd::ErrorCode::IncompleteRequest,
-                        "Write operation requires binary payload data".to_string(),
-                    )))
-                }
+    fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
+        let Some(wdbi) = &mut self.wdbi else {
+            return WriteValueHandle::from_error(sovd::DataError::from_error(
+                sovd::GenericError::from_code(
+                    sovd::ErrorCode::PreconditionNotFulfilled,
+                    "No WriteDataByIdentifier service got registered for this data resource!"
+                        .to_string(),
+                ),
+            ));
+        };
+        if let Some(RequestMessagePayload::Binary(data)) = input.user_data {
+            match wdbi.write(&data) {
+                Ok(()) => WriteValueHandle::ready(),
+                Err(e) => WriteValueHandle::from_error(sovd::DataError {
+                    path: String::new(),
+                    error: match e.code {
+                        ErrorCode::SOVD(err) => Some(err),
+                        ErrorCode::UDS(nrc) => Some(sovd::GenericError::from_code(
+                            sovd::ErrorCode::ErrorResponse,
+                            format!("Write operation failed with NRC 0x{:02X}", u8::from(nrc)),
+                        )),
+                    },
+                }),
             }
+        } else {
+            WriteValueHandle::from_error(sovd::DataError::from_error(
+                sovd::GenericError::from_code(
+                    sovd::ErrorCode::IncompleteRequest,
+                    "This data resource requires binary encoding for its input data!".to_string(),
+                ),
+            ))
         }
     }
 }
@@ -99,14 +122,14 @@ impl DataResource for DataResourceAdapter {
 /// UDS (Unified Diagnostic Services) routine control adapter.
 ///
 /// Bridges UDS RoutineControl (cf. ISO 14229-1:2020, Service 0x31)
-/// to the [`SimpleOperation`](super::SimpleOperation) API.
+/// to the [`SimpleOperation`](super::SimpleOperation) trait.
 pub struct RoutineControlAdapter {
     routine_control: Box<dyn ::uds::RoutineControl + Send>,
 }
 
 impl RoutineControlAdapter {
     #[must_use]
-    pub fn from(instance: impl ::uds::RoutineControl + Send + 'static) -> Self {
+    pub fn new(instance: impl ::uds::RoutineControl + Send + 'static) -> Self {
         Self {
             routine_control: Box::new(instance),
         }
@@ -178,6 +201,24 @@ mod tests {
     use data_resource::DataResource;
     use {ByteSlice, ByteVector};
 
+    /// Helper to extract the result from a ReadValueHandle::Ready variant in tests.
+    fn unwrap_read_value_handle(handle: ReadValueHandle) -> common::Result<ReadValueReply> {
+        match handle {
+            ReadValueHandle::Ready(result) => result,
+            ReadValueHandle::Pending(_) => panic!("expected Ready, got Pending"),
+        }
+    }
+
+    /// Helper to extract the result from a WriteValueHandle::Ready variant in tests.
+    fn unwrap_write_value_handle(
+        handle: WriteValueHandle,
+    ) -> std::result::Result<(), sovd::DataError> {
+        match handle {
+            WriteValueHandle::Ready(result) => result,
+            WriteValueHandle::Pending(_) => panic!("expected Ready, got Pending"),
+        }
+    }
+
     // ── UDS RDBI / WDBI stub implementations ──────────────────────────
 
     struct RdbiForTest {
@@ -227,23 +268,24 @@ mod tests {
 
     #[test]
     fn uds_rdbi_read_returns_binary_payload() {
-        let resource = DataResourceAdapter::from_rdbi(RdbiForTest {
+        let resource = DataResourceAdapter::new().with_rdbi(RdbiForTest {
             data: vec![0xDE, 0xAD],
         });
-        let result = resource
-            .read(ReadValueArgs::from(ReplyMessageEncoding::Binary))
-            .unwrap();
+        let result = unwrap_read_value_handle(
+            resource.read(ReadValueArgs::new(ReplyMessageEncoding::Binary)),
+        )
+        .unwrap();
         assert_eq!(result.data, ReplyMessagePayload::Binary(vec![0xDE, 0xAD]));
-        assert!(result.id.is_none());
         assert!(result.errors.is_none());
     }
 
     #[test]
     fn uds_rdbi_read_propagates_error() {
-        let resource = DataResourceAdapter::from_rdbi(FailingRdbi {});
-        let err = resource
-            .read(ReadValueArgs::from(ReplyMessageEncoding::Binary))
-            .unwrap_err();
+        let resource = DataResourceAdapter::new().with_rdbi(FailingRdbi {});
+        let err = unwrap_read_value_handle(
+            resource.read(ReadValueArgs::new(ReplyMessageEncoding::Binary)),
+        )
+        .unwrap_err();
         match err.code {
             ErrorCode::SOVD(ref e) => {
                 assert_eq!(e.sovd_error, "not-responding");
@@ -256,10 +298,11 @@ mod tests {
 
     #[test]
     fn uds_wdbi_read_returns_error() {
-        let resource = DataResourceAdapter::from_wdbi(WdbiForTest { written: None });
-        let err = resource
-            .read(ReadValueArgs::from(ReplyMessageEncoding::Binary))
-            .unwrap_err();
+        let resource = DataResourceAdapter::new().with_wdbi(WdbiForTest { written: None });
+        let err = unwrap_read_value_handle(
+            resource.read(ReadValueArgs::new(ReplyMessageEncoding::Binary)),
+        )
+        .unwrap_err();
         match err.code {
             ErrorCode::SOVD(ref e) => {
                 assert_eq!(e.sovd_error, "precondition-not-fulfilled");
@@ -272,14 +315,13 @@ mod tests {
 
     #[test]
     fn uds_rdbi_write_returns_error() {
-        let mut resource = DataResourceAdapter::from_rdbi(RdbiForTest { data: vec![0x01] });
-        let err = resource
-            .write(WriteValueArgs {
-                signature: None,
-                user_data: Some(RequestMessagePayload::Binary(vec![0x01])),
-                additional_attrs: None,
-            })
-            .unwrap_err();
+        let mut resource = DataResourceAdapter::new().with_rdbi(RdbiForTest { data: vec![0x01] });
+        let err = unwrap_write_value_handle(resource.write(WriteValueArgs {
+            user_data: Some(RequestMessagePayload::Binary(vec![0x01])),
+            user_data_signature: None,
+            additional_attrs: None,
+        }))
+        .unwrap_err();
         assert_eq!(
             err.error.as_ref().unwrap().sovd_error,
             "precondition-not-fulfilled"
@@ -290,51 +332,48 @@ mod tests {
 
     #[test]
     fn uds_wdbi_write_succeeds_with_binary_data() {
-        let mut resource = DataResourceAdapter::from_wdbi(WdbiForTest { written: None });
-        let result = resource.write(WriteValueArgs {
-            signature: None,
+        let mut resource = DataResourceAdapter::new().with_wdbi(WdbiForTest { written: None });
+        let result = unwrap_write_value_handle(resource.write(WriteValueArgs {
             user_data: Some(RequestMessagePayload::Binary(vec![0xCA, 0xFE])),
+            user_data_signature: None,
             additional_attrs: None,
-        });
+        }));
         assert!(result.is_ok());
     }
 
     #[test]
     fn uds_wdbi_write_fails_with_non_binary_payload() {
-        let mut resource = DataResourceAdapter::from_wdbi(WdbiForTest { written: None });
-        let err = resource
-            .write(WriteValueArgs {
-                signature: None,
-                user_data: Some(RequestMessagePayload::UTF8("text".to_string())),
-                additional_attrs: None,
-            })
-            .unwrap_err();
+        let mut resource = DataResourceAdapter::new().with_wdbi(WdbiForTest { written: None });
+        let err = unwrap_write_value_handle(resource.write(WriteValueArgs {
+            user_data: Some(RequestMessagePayload::UTF8("text".to_string())),
+            user_data_signature: None,
+            additional_attrs: None,
+        }))
+        .unwrap_err();
         assert_eq!(err.error.as_ref().unwrap().sovd_error, "incomplete-request");
     }
 
     #[test]
     fn uds_wdbi_write_fails_with_no_user_data() {
-        let mut resource = DataResourceAdapter::from_wdbi(WdbiForTest { written: None });
-        let err = resource
-            .write(WriteValueArgs {
-                signature: None,
-                user_data: None,
-                additional_attrs: None,
-            })
-            .unwrap_err();
+        let mut resource = DataResourceAdapter::new().with_wdbi(WdbiForTest { written: None });
+        let err = unwrap_write_value_handle(resource.write(WriteValueArgs {
+            user_data: None,
+            user_data_signature: None,
+            additional_attrs: None,
+        }))
+        .unwrap_err();
         assert_eq!(err.error.as_ref().unwrap().sovd_error, "incomplete-request");
     }
 
     #[test]
     fn uds_wdbi_write_maps_underlying_error_to_data_error() {
-        let mut resource = DataResourceAdapter::from_wdbi(FailingWdbi {});
-        let err = resource
-            .write(WriteValueArgs {
-                signature: None,
-                user_data: Some(RequestMessagePayload::Binary(vec![0x01])),
-                additional_attrs: None,
-            })
-            .unwrap_err();
+        let mut resource = DataResourceAdapter::new().with_wdbi(FailingWdbi {});
+        let err = unwrap_write_value_handle(resource.write(WriteValueArgs {
+            user_data: Some(RequestMessagePayload::Binary(vec![0x01])),
+            user_data_signature: None,
+            additional_attrs: None,
+        }))
+        .unwrap_err();
         assert_eq!(err.error.as_ref().unwrap().sovd_error, "error-response");
     }
 
@@ -342,9 +381,323 @@ mod tests {
 
     #[test]
     fn uds_rdbi_read_rejects_non_binary_encoding() {
-        let resource = DataResourceAdapter::from_rdbi(RdbiForTest { data: vec![0x01] });
-        let err = resource
-            .read(ReadValueArgs::from(ReplyMessageEncoding::UTF8))
+        let resource = DataResourceAdapter::new().with_rdbi(RdbiForTest { data: vec![0x01] });
+        let err =
+            unwrap_read_value_handle(resource.read(ReadValueArgs::new(ReplyMessageEncoding::UTF8)))
+                .unwrap_err();
+        match err.code {
+            ErrorCode::SOVD(ref e) => {
+                assert_eq!(e.sovd_error, "precondition-not-fulfilled");
+            }
+            _ => panic!("expected SOVD error code"),
+        }
+    }
+
+    // ── UDS DataResourceAdapter with both RDBI and WDBI ──────────────────────
+
+    #[test]
+    fn uds_combined_adapter_supports_read_and_write() {
+        let mut resource = DataResourceAdapter::new()
+            .with_rdbi(RdbiForTest {
+                data: vec![0xAB, 0xCD],
+            })
+            .with_wdbi(WdbiForTest { written: None });
+
+        let read_result = unwrap_read_value_handle(
+            resource.read(ReadValueArgs::new(ReplyMessageEncoding::Binary)),
+        )
+        .unwrap();
+        assert_eq!(
+            read_result.data,
+            ReplyMessagePayload::Binary(vec![0xAB, 0xCD])
+        );
+
+        let write_result = unwrap_write_value_handle(resource.write(WriteValueArgs {
+            user_data: Some(RequestMessagePayload::Binary(vec![0xEF])),
+            user_data_signature: None,
+            additional_attrs: None,
+        }));
+        assert!(write_result.is_ok());
+    }
+
+    // ── UDS RoutineControl stub implementations ─────────────────────────
+
+    struct RoutineControlForTest {
+        start_reply: Option<ByteVector>,
+        start_result: Option<ByteVector>,
+        stop_result: Option<ByteVector>,
+        completion: Option<u8>,
+    }
+
+    impl ::uds::RoutineControl for RoutineControlForTest {
+        fn start(&mut self, _input: Option<ByteSlice>) -> DiagResult<::uds::StartRoutine> {
+            let result = self.start_result.clone();
+            let reply = self.start_reply.clone();
+            ::uds::StartRoutine::from_future(async move { Ok(result) }, reply)
+        }
+
+        fn stop(&mut self, _input: Option<ByteSlice>) -> DiagResult<Option<ByteVector>> {
+            Ok(self.stop_result.clone())
+        }
+
+        fn completion_percentage(&self) -> Option<u8> {
+            self.completion
+        }
+    }
+
+    struct FailingRoutineControl;
+
+    impl ::uds::RoutineControl for FailingRoutineControl {
+        fn start(&mut self, _input: Option<ByteSlice>) -> DiagResult<::uds::StartRoutine> {
+            Err(Error::from_error(sovd::GenericError::from_code(
+                sovd::ErrorCode::NotResponding,
+                "routine start failed".to_string(),
+            )))
+        }
+
+        fn stop(&mut self, _input: Option<ByteSlice>) -> DiagResult<Option<ByteVector>> {
+            Err(Error::from_error(sovd::GenericError::from_code(
+                sovd::ErrorCode::ErrorResponse,
+                "routine stop failed".to_string(),
+            )))
+        }
+    }
+
+    // ── RoutineControlAdapter::start ─────────────────────────────────────
+
+    #[tokio::test]
+    async fn routine_start_with_binary_input_succeeds() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: Some(vec![0xCA, 0xFE]),
+            stop_result: None,
+            completion: None,
+        });
+        let handle = adapter
+            .start(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: Some(RequestMessagePayload::Binary(vec![0x01, 0x02])),
+                additional_attrs: None,
+                proximity_response: None,
+            })
+            .unwrap();
+        assert!(handle.reply.is_none());
+        let result = handle.future.await.unwrap();
+        assert_eq!(
+            result.message_payload,
+            Some(ReplyMessagePayload::Binary(vec![0xCA, 0xFE]))
+        );
+    }
+
+    #[tokio::test]
+    async fn routine_start_with_no_input_succeeds() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: Some(vec![0xAB]),
+            stop_result: None,
+            completion: None,
+        });
+        let handle = adapter
+            .start(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: None,
+                additional_attrs: None,
+                proximity_response: None,
+            })
+            .unwrap();
+        let result = handle.future.await.unwrap();
+        assert_eq!(
+            result.message_payload,
+            Some(ReplyMessagePayload::Binary(vec![0xAB]))
+        );
+    }
+
+    #[tokio::test]
+    async fn routine_start_with_reply_returns_immediate_reply() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: Some(vec![0xBE, 0xEF]),
+            start_result: Some(vec![0xCA, 0xFE]),
+            stop_result: None,
+            completion: None,
+        });
+        let handle = adapter
+            .start(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: None,
+                additional_attrs: None,
+                proximity_response: None,
+            })
+            .unwrap();
+        assert_eq!(
+            handle.reply,
+            Some(DiagnosticReply {
+                message_payload: Some(ReplyMessagePayload::Binary(vec![0xBE, 0xEF])),
+                additional_attrs: None,
+            })
+        );
+        let result = handle.future.await.unwrap();
+        assert_eq!(
+            result.message_payload,
+            Some(ReplyMessagePayload::Binary(vec![0xCA, 0xFE]))
+        );
+    }
+
+    #[tokio::test]
+    async fn routine_start_with_none_result_returns_default_reply() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: None,
+        });
+        let handle = adapter
+            .start(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: None,
+                additional_attrs: None,
+                proximity_response: None,
+            })
+            .unwrap();
+        let result = handle.future.await.unwrap();
+        assert_eq!(result, DiagnosticReply::default());
+    }
+
+    #[test]
+    fn routine_start_rejects_non_binary_input() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: None,
+        });
+        let result = adapter.start(ExecuteArguments {
+            reply_encoding: ReplyMessageEncoding::Binary,
+            user_parameters: Some(RequestMessagePayload::UTF8("text".to_string())),
+            additional_attrs: None,
+            proximity_response: None,
+        });
+        match result {
+            Err(ref err) => match err.code {
+                ErrorCode::SOVD(ref e) => {
+                    assert_eq!(e.sovd_error, "precondition-not-fulfilled");
+                }
+                _ => panic!("expected SOVD error code"),
+            },
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    #[test]
+    fn routine_start_propagates_error_from_routine_control() {
+        let mut adapter = RoutineControlAdapter::new(FailingRoutineControl);
+        let result = adapter.start(ExecuteArguments {
+            reply_encoding: ReplyMessageEncoding::Binary,
+            user_parameters: None,
+            additional_attrs: None,
+            proximity_response: None,
+        });
+        match result {
+            Err(ref err) => match err.code {
+                ErrorCode::SOVD(ref e) => {
+                    assert_eq!(e.sovd_error, "not-responding");
+                }
+                _ => panic!("expected SOVD error code"),
+            },
+            Ok(_) => panic!("expected error"),
+        }
+    }
+
+    // ── RoutineControlAdapter::stop ──────────────────────────────────────
+
+    #[test]
+    fn routine_stop_with_binary_input_succeeds() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: Some(vec![0xDE, 0xAD]),
+            completion: None,
+        });
+        let result = adapter
+            .stop(Some(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: Some(RequestMessagePayload::Binary(vec![0x03])),
+                additional_attrs: None,
+                proximity_response: None,
+            }))
+            .unwrap();
+        assert_eq!(
+            result,
+            Some(DiagnosticReply {
+                message_payload: Some(ReplyMessagePayload::Binary(vec![0xDE, 0xAD])),
+                additional_attrs: None,
+            })
+        );
+    }
+
+    #[test]
+    fn routine_stop_with_no_args_succeeds() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: Some(vec![0xFF]),
+            completion: None,
+        });
+        let result = adapter.stop(None).unwrap();
+        assert_eq!(
+            result,
+            Some(DiagnosticReply {
+                message_payload: Some(ReplyMessagePayload::Binary(vec![0xFF])),
+                additional_attrs: None,
+            })
+        );
+    }
+
+    #[test]
+    fn routine_stop_with_no_user_parameters_succeeds() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: None,
+        });
+        let result = adapter
+            .stop(Some(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: None,
+                additional_attrs: None,
+                proximity_response: None,
+            }))
+            .unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn routine_stop_returns_none_when_routine_returns_none() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: None,
+        });
+        let result = adapter.stop(None).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn routine_stop_rejects_non_binary_input() {
+        let mut adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: None,
+        });
+        let err = adapter
+            .stop(Some(ExecuteArguments {
+                reply_encoding: ReplyMessageEncoding::Binary,
+                user_parameters: Some(RequestMessagePayload::UTF8("text".to_string())),
+                additional_attrs: None,
+                proximity_response: None,
+            }))
             .unwrap_err();
         match err.code {
             ErrorCode::SOVD(ref e) => {
@@ -354,5 +707,39 @@ mod tests {
         }
     }
 
-    // TODO: add comprehensive unit tests for RoutineControlAdapter!
+    #[test]
+    fn routine_stop_propagates_error_from_routine_control() {
+        let mut adapter = RoutineControlAdapter::new(FailingRoutineControl);
+        let err = adapter.stop(None).unwrap_err();
+        match err.code {
+            ErrorCode::SOVD(ref e) => {
+                assert_eq!(e.sovd_error, "error-response");
+            }
+            _ => panic!("expected SOVD error code"),
+        }
+    }
+
+    // ── RoutineControlAdapter::completion_percentage ─────────────────────
+
+    #[test]
+    fn routine_completion_percentage_returns_value() {
+        let adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: Some(42),
+        });
+        assert_eq!(adapter.completion_percentage(), Some(42));
+    }
+
+    #[test]
+    fn routine_completion_percentage_returns_none_when_not_available() {
+        let adapter = RoutineControlAdapter::new(RoutineControlForTest {
+            start_reply: None,
+            start_result: None,
+            stop_result: None,
+            completion: None,
+        });
+        assert_eq!(adapter.completion_percentage(), None);
+    }
 }

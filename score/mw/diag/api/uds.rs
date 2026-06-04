@@ -54,45 +54,23 @@ pub struct StartRoutine {
 }
 
 impl StartRoutine {
-    pub fn from_closure<F: FnOnce() -> DiagResult<Option<ByteVector>> + Send + 'static>(
-        closure: F,
-    ) -> DiagResult<Self> {
+    pub fn from_closure<Func>(func: Func, reply: Option<ByteVector>) -> DiagResult<Self>
+    where
+        Func: FnOnce() -> DiagResult<Option<ByteVector>> + Send + 'static,
+    {
         Ok(Self {
-            future: Box::pin(async move { closure() }),
-            reply: None,
+            future: Box::pin(async move { func() }),
+            reply: reply,
         })
     }
 
-    pub fn from_closure_with_reply<
-        F: FnOnce() -> DiagResult<Option<ByteVector>> + Send + 'static,
-    >(
-        closure: F,
-        reply: ByteVector,
-    ) -> DiagResult<Self> {
-        Ok(Self {
-            future: Box::pin(async move { closure() }),
-            reply: Some(reply),
-        })
-    }
-
-    pub fn from_future_with_reply<
-        F: Future<Output = DiagResult<Option<ByteVector>>> + Send + 'static,
-    >(
-        future: F,
-        reply: ByteVector,
-    ) -> DiagResult<Self> {
+    pub fn from_future<Fut>(future: Fut, reply: Option<ByteVector>) -> DiagResult<Self>
+    where
+        Fut: Future<Output = DiagResult<Option<ByteVector>>> + Send + 'static,
+    {
         Ok(Self {
             future: Box::pin(future),
-            reply: Some(reply),
-        })
-    }
-
-    pub fn from_future<F: Future<Output = DiagResult<Option<ByteVector>>> + Send + 'static>(
-        future: F,
-    ) -> DiagResult<Self> {
-        Ok(Self {
-            future: Box::pin(future),
-            reply: None,
+            reply: reply,
         })
     }
 

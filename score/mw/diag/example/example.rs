@@ -19,6 +19,7 @@ use diag_api::*;
 
 use diag_runtime::*;
 
+use futures::StreamExt;
 use std::sync::Arc;
 use tokio::sync::{mpsc, Notify};
 
@@ -45,12 +46,12 @@ struct MyUdsRoutine {
 impl RoutineControl for MyUdsRoutine {
     fn start(&mut self, _input: Option<&[u8]>) -> DiagResult<StartRoutine> {
         let completion = self.completion.clone();
-        StartRoutine::from_future_with_reply(
+        StartRoutine::from_future(
             async move {
                 completion.notified().await;
                 Ok(Some(vec![0xCA, 0xFE]))
             },
-            vec![0xBE, 0xEF],
+            Some(vec![0xBE, 0xEF]),
         )
     }
 
@@ -69,10 +70,9 @@ struct MyDataResource {
 }
 
 impl DataResource for MyDataResource {
-    fn read(&self, input: ReadValueArgs) -> DiagResult<ReadValueReply> {
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
-        Ok(ReadValueReply {
-            id: Some("my_data_resource".to_string()),
+        ReadValueHandle::ready(ReadValueReply {
             data: ReplyMessagePayload::UTF8(self.value.clone()),
             errors: None,
         })
@@ -89,10 +89,10 @@ impl Operation for MySyncOperation {
     fn execute(
         &mut self,
         input: ExecuteArguments,
-        _control: ExecutionControl,
+        _control: Box<dyn ExecutionControl>,
     ) -> DiagResult<ExecutionHandle> {
         assert_eq!(input.reply_encoding, ReplyMessageEncoding::UTF8);
-        ExecutionHandle::from_closure(move || {
+        Ok(ExecutionHandle::from_closure(move || {
             println!("Sync operation execution got initiated ...");
             ExecutionResult::Ok(DiagnosticReply {
                 message_payload: Some(ReplyMessagePayload::UTF8(
@@ -100,7 +100,7 @@ impl Operation for MySyncOperation {
                 )),
                 additional_attrs: None,
             })
-        })
+        }))
     }
 }
 
@@ -127,24 +127,28 @@ impl MyAsyncOperation {
         })
     }
 
-    async fn exec_control(mut control: ExecutionControl, notifier: mpsc::Sender<()>) {
+    async fn exec_control(mut control: Box<dyn ExecutionControl>, notifier: mpsc::Sender<()>) {
         let mut exec_status = ExecutionStatus::Scheduled;
         loop {
-            let exec_event = control.next_exec_event().await;
+            let Some(exec_event) = control.next().await else {
+                break;
+            };
             match exec_event.kind {
                 ExecutionEventKind::HandleCustomCapability(custom_capability) => {
                     println!("Async operation's execution received custom capability event!");
                     assert_eq!("An OEM specific capability", custom_capability);
-                    exec_status = ExecutionStatus::UnsupportedCapability;
+                    exec_status = ExecutionStatus::UnsupportedCapability(custom_capability);
                 }
 
                 ExecutionEventKind::ReportStatus => {
                     println!("Async operation's execution received report status event!");
                     exec_event
                         .status_reporter
-                        .put(exec_status, ExecutionStatusDetails::none());
+                        .put(exec_status.clone(), ExecutionStatusDetails::default());
                     match exec_status {
-                        ExecutionStatus::Scheduled => exec_status = ExecutionStatus::Running,
+                        ExecutionStatus::Scheduled => {
+                            exec_status = ExecutionStatus::Running;
+                        }
                         _other => {
                             exec_status = ExecutionStatus::Running;
                             notifier
@@ -162,6 +166,9 @@ impl MyAsyncOperation {
 
                 ExecutionEventKind::Stop => {
                     println!("Async operation execution received stop event!");
+                    exec_event
+                        .status_reporter
+                        .put(ExecutionStatus::Stopped, ExecutionStatusDetails::default());
                     break;
                 }
 
@@ -175,10 +182,10 @@ impl Operation for MyAsyncOperation {
     fn execute(
         &mut self,
         input: ExecuteArguments,
-        control: ExecutionControl,
+        control: Box<dyn ExecutionControl>,
     ) -> DiagResult<ExecutionHandle> {
         let (notifier, notification) = mpsc::channel(10);
-        ExecutionHandle::from_future(async move {
+        Ok(ExecutionHandle::from_future(async move {
             tokio::select! {
                result_data = Self::user_code(input, notification) => result_data,
                _ = Self::exec_control(control, notifier) => ExecutionResult::Err(Error::from_error(diag_api::sovd::GenericError::from_code(
@@ -186,7 +193,7 @@ impl Operation for MyAsyncOperation {
                    "execution got stopped".to_string(),
                ))),
             }
-        })
+        }))
     }
 }
 
@@ -219,17 +226,19 @@ mod tests {
                 id: DATA_RESOURCE_ID.to_string(),
                 name: "My Data Resource".to_string(),
                 translation_id: None,
+                read_only: false,
                 category: DataCategory::CurrentData,
                 groups: None,
             },
         );
         entity.register_data_resource(
-            diag_api::uds::DataResourceAdapter::RDBI(Box::new(MyReadDataByIdentifier {})),
+            diag_api::uds::DataResourceAdapter::new().with_rdbi(MyReadDataByIdentifier {}),
             UDS_DATA_RESOURCE_ID.to_string(),
             DataResourceMetadata {
                 id: UDS_DATA_RESOURCE_ID.to_string(),
                 name: "My UDS Data Resource".to_string(),
                 translation_id: None,
+                read_only: true,
                 category: DataCategory::StoredData,
                 groups: None,
             },
@@ -288,12 +297,11 @@ mod tests {
             .send(SOVDMessage::ReadDataResource(
                 ENTITY_ID.to_string(),
                 DATA_RESOURCE_ID.to_string(),
-                ReadValueArgs::from(ReplyMessageEncoding::UTF8),
+                ReadValueArgs::new(ReplyMessageEncoding::UTF8),
             ))
             .await
         {
             SOVDReply::ReadDataResource(Ok(read_value)) => {
-                assert_eq!(read_value.id, Some(DATA_RESOURCE_ID.to_string()));
                 assert_eq!(
                     read_value.data,
                     ReplyMessagePayload::UTF8("This is an SOVD data resource value.".to_string())
@@ -320,12 +328,11 @@ mod tests {
             .send(SOVDMessage::ReadDataResource(
                 ENTITY_ID.to_string(),
                 UDS_DATA_RESOURCE_ID.to_string(),
-                ReadValueArgs::from(ReplyMessageEncoding::Binary),
+                ReadValueArgs::new(ReplyMessageEncoding::Binary),
             ))
             .await
         {
             SOVDReply::ReadDataResource(Ok(read_value)) => {
-                assert!(read_value.id.is_none());
                 assert_eq!(
                     read_value.data,
                     ReplyMessagePayload::Binary(vec![0xDE, 0xAD, 0xBE, 0xEF])
@@ -337,13 +344,16 @@ mod tests {
 
         // verify error upon write (RDBI does not support write)
         let mut rdbi_resource =
-            diag_api::uds::DataResourceAdapter::RDBI(Box::new(MyReadDataByIdentifier {}));
-        let write_result = rdbi_resource.write(WriteValueArgs {
-            signature: None,
+            diag_api::uds::DataResourceAdapter::new().with_rdbi(MyReadDataByIdentifier {});
+        let write_handle = rdbi_resource.write(WriteValueArgs {
+            user_data_signature: None,
             user_data: None,
             additional_attrs: None,
         });
-        let err = write_result.unwrap_err();
+        let err = match write_handle {
+            WriteValueHandle::Ready(result) => result.unwrap_err(),
+            WriteValueHandle::Pending(_) => panic!("expected Ready, got Pending"),
+        };
         assert_eq!(
             err.error.as_ref().unwrap().sovd_error,
             "precondition-not-fulfilled"
@@ -597,7 +607,12 @@ mod tests {
             .await
         {
             SOVDReply::GetOperationExecutionStatus(Ok(status)) => {
-                assert_eq!(status, ExecutionStatus::UnsupportedCapability);
+                assert_eq!(
+                    status,
+                    ExecutionStatus::UnsupportedCapability(
+                        "An OEM specific capability".to_string()
+                    )
+                );
                 println!("Execution status: {:?}", status);
             }
             other => panic!("Unexpected reply: {:?}", other),
@@ -670,7 +685,7 @@ mod tests {
         let routine_completion = Arc::new(Notify::new());
         let entity = runtime.get_or_create_entity(ENTITY_ID.to_string());
         entity.register_operation(
-            SimpleOperationAdapter::from(RoutineControlAdapter::from(MyUdsRoutine {
+            SimpleOperationAdapter::new(RoutineControlAdapter::new(MyUdsRoutine {
                 completion: routine_completion.clone(),
             })),
             UDS_ROUTINE_OP_ID.to_string(),

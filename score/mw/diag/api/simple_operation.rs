@@ -13,6 +13,7 @@
 
 use common::DiagnosticReply;
 use common::Result as DiagResult;
+use futures::StreamExt;
 use operation::{
     ExecuteArguments, ExecutionControl, ExecutionEventKind, ExecutionHandle, ExecutionId,
     ExecutionStatus, ExecutionStatusDetails,
@@ -40,16 +41,22 @@ pub trait SimpleOperation {
 /// Adapter that wraps a `SimpleOperation` but implements the full `Operation` trait,
 /// bridging the simplified interface to the runtime's execution control model.
 pub struct SimpleOperationAdapter {
-    op_instance: Arc<Mutex<Box<dyn SimpleOperation + Send>>>,
-    active_exec_id: Mutex<Option<ExecutionId>>,
+    data: Arc<Mutex<SimpleOperationAdapterData>>,
+}
+
+struct SimpleOperationAdapterData {
+    op_instance: Box<dyn SimpleOperation + Send>,
+    active_exec_id: Option<ExecutionId>,
 }
 
 impl SimpleOperationAdapter {
     #[must_use]
-    pub fn from(instance: impl SimpleOperation + Send + 'static) -> Self {
+    pub fn new(instance: impl SimpleOperation + Send + 'static) -> Self {
         Self {
-            op_instance: Arc::new(Mutex::new(Box::new(instance))),
-            active_exec_id: Mutex::new(None),
+            data: Arc::new(Mutex::new(SimpleOperationAdapterData {
+                op_instance: Box::new(instance),
+                active_exec_id: None,
+            })),
         }
     }
 }
@@ -58,13 +65,13 @@ impl operation::Operation for SimpleOperationAdapter {
     fn execute(
         &mut self,
         input: ExecuteArguments,
-        mut exec_control: ExecutionControl,
+        mut exec_control: Box<dyn ExecutionControl>,
     ) -> DiagResult<ExecutionHandle> {
-        let mut active_id = self
-            .active_exec_id
+        let mut data = self
+            .data
             .lock()
-            .map_err(|_| common::Error::mutex_error())?;
-        if active_id.is_some() {
+            .map_err(|_| common::Error::mutex_poisoned())?;
+        if data.active_exec_id.is_some() {
             return Err(common::Error::from_error(
                 common::sovd::GenericError::from_code(
                     common::sovd::ErrorCode::PreconditionNotFulfilled,
@@ -72,14 +79,11 @@ impl operation::Operation for SimpleOperationAdapter {
                 ),
             ));
         }
-        *active_id = Some(exec_control.get_exec_id().clone());
+        data.active_exec_id = Some(exec_control.exec_id().clone());
 
-        let op_instance = Arc::clone(&self.op_instance);
+        let exec_handle = data.op_instance.start(input)?;
 
-        let exec_handle = op_instance
-            .lock()
-            .map_err(|_| common::Error::mutex_error())?
-            .start(input)?;
+        let op_adapter_data = Arc::clone(&self.data);
 
         let exec_control_future = async move {
             let mut last_exec_event_kind = ExecutionEventKind::Resume;
@@ -87,40 +91,42 @@ impl operation::Operation for SimpleOperationAdapter {
             let mut exec_status = ExecutionStatus::Running;
 
             loop {
-                let exec_event = exec_control.next_exec_event().await;
+                let Some(exec_event) = exec_control.next().await else {
+                    break;
+                };
                 match exec_event.kind {
                     ExecutionEventKind::ControlGone => break,
 
                     ExecutionEventKind::ReportStatus => {
-                        let mut details =
-                            ExecutionStatusDetails::from(last_exec_event_kind.clone());
-                        if let Some(percentage) = op_instance
+                        let mut details = ExecutionStatusDetails::new(last_exec_event_kind.clone());
+                        if let Some(percentage) = op_adapter_data
                             .lock()
                             .ok()
-                            .and_then(|op| op.completion_percentage())
+                            .and_then(|data| data.op_instance.completion_percentage())
                         {
                             details = details.with_completion_percentage(percentage);
                         }
                         if !exec_errors.is_empty() {
                             details = details.with_exec_errors(exec_errors.clone());
                         }
-                        exec_event.status_reporter.put(exec_status, details);
+                        exec_event.status_reporter.put(exec_status.clone(), details);
                     }
 
                     _ => {
                         last_exec_event_kind = exec_event.kind;
                         match last_exec_event_kind {
                             ExecutionEventKind::Stop => {
-                                match op_instance
+                                match op_adapter_data
                                     .lock()
-                                    .map_err(|_| common::Error::mutex_error())
-                                    .and_then(|mut op| op.stop(exec_event.args))
+                                    .map_err(|_| common::Error::mutex_poisoned())
+                                    .and_then(|mut data| data.op_instance.stop(exec_event.args))
                                 {
                                     Ok(Some(result)) => {
                                         exec_status = ExecutionStatus::Stopped;
                                         exec_event.status_reporter.put(
-                                            exec_status,
-                                            ExecutionStatusDetails::none().with_reply_data(result),
+                                            exec_status.clone(),
+                                            ExecutionStatusDetails::default()
+                                                .with_reply_data(result),
                                         );
                                     }
                                     Ok(None) => {
@@ -129,15 +135,19 @@ impl operation::Operation for SimpleOperationAdapter {
                                     Err(err) => {
                                         exec_errors.push(err);
                                         exec_event.status_reporter.put(
-                                            exec_status,
-                                            ExecutionStatusDetails::none()
+                                            exec_status.clone(),
+                                            ExecutionStatusDetails::default()
                                                 .with_exec_errors(exec_errors.clone()),
                                         );
                                     }
                                 }
                             }
 
-                            _ => exec_status = ExecutionStatus::UnsupportedCapability,
+                            _ => {
+                                exec_status = ExecutionStatus::UnsupportedCapability(
+                                    last_exec_event_kind.to_string(),
+                                )
+                            }
                         }
                     }
                 }
@@ -152,6 +162,7 @@ impl operation::Operation for SimpleOperationAdapter {
                 ));
             }
 
+            // Control ended normally; yield to let the operation future provide the result.
             Ok(DiagnosticReply::default())
         };
 
@@ -175,9 +186,10 @@ impl operation::Operation for SimpleOperationAdapter {
 mod tests {
     use super::*;
     use common::ReplyMessagePayload;
-    use futures::future::BoxFuture;
-    use operation::{ExecutionControlApi, ExecutionEvent, ExecutionEventKind, ExecutionHandle};
+    use operation::{ExecutionControl, ExecutionEvent, ExecutionEventKind, ExecutionHandle};
+    use std::pin::Pin;
     use std::sync::{Arc, Mutex};
+    use std::task::{Context, Poll};
 
     // ── Mock infrastructure ──────────────────────────────────────────
 
@@ -224,37 +236,55 @@ mod tests {
         }
     }
 
-    /// Mock `ExecutionControlApi` that returns a configurable sequence of events.
+    /// Mock `ExecutionControl` that returns a configurable sequence of events.
+    /// Alternates between `Pending` and `Ready` to simulate async delivery.
     struct MockExecControl {
         events: Vec<ExecutionEvent>,
+        exec_id: ExecutionId,
+        yield_next: bool,
     }
 
     impl MockExecControl {
-        fn from_kinds(kinds: Vec<ExecutionEventKind>) -> Self {
+        fn from_kinds(kinds: Vec<ExecutionEventKind>, exec_id: String) -> Self {
             Self {
-                events: kinds
-                    .into_iter()
-                    .map(|k| ExecutionEvent::from_kind(k))
-                    .collect(),
+                events: kinds.into_iter().map(|k| ExecutionEvent::new(k)).collect(),
+                exec_id,
+                yield_next: true,
             }
         }
 
-        fn from_events(events: Vec<ExecutionEvent>) -> Self {
-            Self { events }
+        fn from_events(events: Vec<ExecutionEvent>, exec_id: String) -> Self {
+            Self {
+                events,
+                exec_id,
+                yield_next: true,
+            }
         }
     }
 
-    impl ExecutionControlApi for MockExecControl {
-        fn next_exec_event(&mut self) -> BoxFuture<'_, ExecutionEvent> {
-            let event = if self.events.is_empty() {
-                ExecutionEvent::from_kind(ExecutionEventKind::ControlGone)
+    impl futures::Stream for MockExecControl {
+        type Item = ExecutionEvent;
+        fn poll_next(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+            let this = self.get_mut();
+            if this.yield_next {
+                this.yield_next = false;
+                cx.waker().wake_by_ref();
+                Poll::Pending
             } else {
-                self.events.remove(0)
-            };
-            Box::pin(async move {
-                tokio::task::yield_now().await;
-                event
-            })
+                this.yield_next = true;
+                if this.events.is_empty() {
+                    Poll::Ready(None)
+                } else {
+                    let event = this.events.remove(0);
+                    Poll::Ready(Some(event))
+                }
+            }
+        }
+    }
+
+    impl ExecutionControl for MockExecControl {
+        fn exec_id(&self) -> &ExecutionId {
+            &self.exec_id
         }
     }
 
@@ -269,13 +299,19 @@ mod tests {
     }
 
     /// Helper: create an `ExecutionControl` from a list of event kinds.
-    fn exec_control_from_kinds(kinds: Vec<ExecutionEventKind>, exec_id: &str) -> ExecutionControl {
-        ExecutionControl::from(MockExecControl::from_kinds(kinds), exec_id.to_string())
+    fn exec_control_from_kinds(
+        kinds: Vec<ExecutionEventKind>,
+        exec_id: &str,
+    ) -> Box<dyn ExecutionControl> {
+        Box::new(MockExecControl::from_kinds(kinds, exec_id.to_string()))
     }
 
     /// Helper: create an `ExecutionControl` from a list of events.
-    fn exec_control_from_events(events: Vec<ExecutionEvent>, exec_id: &str) -> ExecutionControl {
-        ExecutionControl::from(MockExecControl::from_events(events), exec_id.to_string())
+    fn exec_control_from_events(
+        events: Vec<ExecutionEvent>,
+        exec_id: &str,
+    ) -> Box<dyn ExecutionControl> {
+        Box::new(MockExecControl::from_events(events, exec_id.to_string()))
     }
 
     // ── Test Adapter construction ────────────────────────────────────
@@ -283,10 +319,14 @@ mod tests {
     #[test]
     fn adapter_from_creates_instance() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_closure(|| Ok(DiagnosticReply::default())),
+            |_| {
+                Ok(ExecutionHandle::from_closure(|| {
+                    Ok(DiagnosticReply::default())
+                }))
+            },
             |_| Ok(None),
         );
-        let _adapter = SimpleOperationAdapter::from(op);
+        let _adapter = SimpleOperationAdapter::new(op);
     }
 
     // ── Test Adapter execute — happy path ────────────────────────────
@@ -295,16 +335,16 @@ mod tests {
     async fn adapter_execute_resolves_op_future() {
         let op = MockSimpleOp::new(
             |_| {
-                ExecutionHandle::from_closure(|| {
+                Ok(ExecutionHandle::from_closure(|| {
                     Ok(DiagnosticReply {
                         message_payload: Some(ReplyMessagePayload::from_string("done".to_string())),
                         additional_attrs: None,
                     })
-                })
+                }))
             },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
         let ctrl = exec_control_from_kinds(vec![ExecutionEventKind::ControlGone], "exec-id");
         let handle =
             operation::Operation::execute(&mut adapter, default_exec_args(), ctrl).unwrap();
@@ -327,17 +367,15 @@ mod tests {
         };
         let op = MockSimpleOp::new(
             move |_| {
-                ExecutionHandle::from_closure_and_reply(
-                    {
-                        let reply = final_reply.clone();
-                        move || Ok(reply)
-                    },
-                    initial_reply.clone(),
-                )
+                Ok(ExecutionHandle::from_closure({
+                    let reply = final_reply.clone();
+                    move || Ok(reply)
+                })
+                .with_reply(initial_reply.clone()))
             },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
         let ctrl = exec_control_from_kinds(vec![ExecutionEventKind::ControlGone], "exec-id");
         let handle =
             operation::Operation::execute(&mut adapter, default_exec_args(), ctrl).unwrap();
@@ -358,10 +396,14 @@ mod tests {
     #[tokio::test]
     async fn adapter_reports_status_while_running() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_status: Arc<Mutex<Option<ExecutionStatus>>> = Arc::new(Mutex::new(None));
         let captured_details: Arc<Mutex<Option<ExecutionStatusDetails>>> =
@@ -369,14 +411,14 @@ mod tests {
         let cs = captured_status.clone();
         let cd = captured_details.clone();
 
-        let report_event = ExecutionEvent::from_kind(ExecutionEventKind::ReportStatus)
+        let report_event = ExecutionEvent::new(ExecutionEventKind::ReportStatus)
             .with_status_reporter(move |status, details| {
                 *cs.lock().unwrap() = Some(status);
                 *cd.lock().unwrap() = Some(details);
             });
         let events = vec![
             report_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -403,23 +445,27 @@ mod tests {
     #[tokio::test]
     async fn adapter_reports_status_with_completion_percentage() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         )
         .with_completion_percentage(50);
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_details: Arc<Mutex<Option<ExecutionStatusDetails>>> =
             Arc::new(Mutex::new(None));
         let cd = captured_details.clone();
 
-        let report_event = ExecutionEvent::from_kind(ExecutionEventKind::ReportStatus)
+        let report_event = ExecutionEvent::new(ExecutionEventKind::ReportStatus)
             .with_status_reporter(move |_status, details| {
                 *cd.lock().unwrap() = Some(details);
             });
         let events = vec![
             report_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -439,7 +485,11 @@ mod tests {
     #[tokio::test]
     async fn adapter_stop_returns_reply() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| {
                 Ok(Some(DiagnosticReply {
                     message_payload: Some(ReplyMessagePayload::from_string(
@@ -449,7 +499,7 @@ mod tests {
                 }))
             },
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_status: Arc<Mutex<Option<ExecutionStatus>>> = Arc::new(Mutex::new(None));
         let captured_details: Arc<Mutex<Option<ExecutionStatusDetails>>> =
@@ -457,7 +507,7 @@ mod tests {
         let cs = captured_status.clone();
         let cd = captured_details.clone();
 
-        let stop_event = ExecutionEvent::from_kind(ExecutionEventKind::Stop).with_status_reporter(
+        let stop_event = ExecutionEvent::new(ExecutionEventKind::Stop).with_status_reporter(
             move |status, details| {
                 *cs.lock().unwrap() = Some(status);
                 *cd.lock().unwrap() = Some(details);
@@ -465,7 +515,7 @@ mod tests {
         );
         let events = vec![
             stop_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -497,14 +547,18 @@ mod tests {
     #[tokio::test]
     async fn adapter_stop_returns_none() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let events = vec![
-            ExecutionEvent::from_kind(ExecutionEventKind::Stop),
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::Stop),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -523,7 +577,11 @@ mod tests {
     #[tokio::test]
     async fn adapter_stop_returns_error() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| {
                 Err(common::Error::from_error(
                     common::sovd::GenericError::from_code(
@@ -533,20 +591,20 @@ mod tests {
                 ))
             },
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_details: Arc<Mutex<Option<ExecutionStatusDetails>>> =
             Arc::new(Mutex::new(None));
         let cd = captured_details.clone();
 
-        let stop_event = ExecutionEvent::from_kind(ExecutionEventKind::Stop).with_status_reporter(
+        let stop_event = ExecutionEvent::new(ExecutionEventKind::Stop).with_status_reporter(
             move |_status, details| {
                 *cd.lock().unwrap() = Some(details);
             },
         );
         let events = vec![
             stop_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -576,12 +634,16 @@ mod tests {
     #[tokio::test]
     async fn adapter_control_gone_completes_status() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
-        let events = vec![ExecutionEvent::from_kind(ExecutionEventKind::ControlGone)];
+        let events = vec![ExecutionEvent::new(ExecutionEventKind::ControlGone)];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
             operation::Operation::execute(&mut adapter, default_exec_args(), ctrl).unwrap();
@@ -595,22 +657,26 @@ mod tests {
     #[tokio::test]
     async fn adapter_unsupported_event_kind_interrupt() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_status: Arc<Mutex<Option<ExecutionStatus>>> = Arc::new(Mutex::new(None));
         let cs = captured_status.clone();
 
-        let report_event = ExecutionEvent::from_kind(ExecutionEventKind::ReportStatus)
+        let report_event = ExecutionEvent::new(ExecutionEventKind::ReportStatus)
             .with_status_reporter(move |status, _details| {
                 *cs.lock().unwrap() = Some(status);
             });
         let events = vec![
-            ExecutionEvent::from_kind(ExecutionEventKind::Interrupt),
+            ExecutionEvent::new(ExecutionEventKind::Interrupt),
             report_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -622,28 +688,35 @@ mod tests {
             .unwrap()
             .take()
             .expect("no status was reported");
-        assert_eq!(status, ExecutionStatus::UnsupportedCapability);
+        assert_eq!(
+            status,
+            ExecutionStatus::UnsupportedCapability("freeze".to_string())
+        );
     }
 
     #[tokio::test]
     async fn adapter_unsupported_event_kind_resume() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_status: Arc<Mutex<Option<ExecutionStatus>>> = Arc::new(Mutex::new(None));
         let cs = captured_status.clone();
 
-        let report_event = ExecutionEvent::from_kind(ExecutionEventKind::ReportStatus)
+        let report_event = ExecutionEvent::new(ExecutionEventKind::ReportStatus)
             .with_status_reporter(move |status, _details| {
                 *cs.lock().unwrap() = Some(status);
             });
         let events = vec![
-            ExecutionEvent::from_kind(ExecutionEventKind::Resume),
+            ExecutionEvent::new(ExecutionEventKind::Resume),
             report_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -655,30 +728,37 @@ mod tests {
             .unwrap()
             .take()
             .expect("no status was reported");
-        assert_eq!(status, ExecutionStatus::UnsupportedCapability);
+        assert_eq!(
+            status,
+            ExecutionStatus::UnsupportedCapability("execute".to_string())
+        );
     }
 
     #[tokio::test]
     async fn adapter_unsupported_event_kind_custom_capability() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_status: Arc<Mutex<Option<ExecutionStatus>>> = Arc::new(Mutex::new(None));
         let cs = captured_status.clone();
 
-        let report_event = ExecutionEvent::from_kind(ExecutionEventKind::ReportStatus)
+        let report_event = ExecutionEvent::new(ExecutionEventKind::ReportStatus)
             .with_status_reporter(move |status, _details| {
                 *cs.lock().unwrap() = Some(status);
             });
         let events = vec![
-            ExecutionEvent::from_kind(ExecutionEventKind::HandleCustomCapability(
+            ExecutionEvent::new(ExecutionEventKind::HandleCustomCapability(
                 "custom".to_string(),
             )),
             report_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -690,7 +770,10 @@ mod tests {
             .unwrap()
             .take()
             .expect("no status was reported");
-        assert_eq!(status, ExecutionStatus::UnsupportedCapability);
+        assert_eq!(
+            status,
+            ExecutionStatus::UnsupportedCapability("custom".to_string())
+        );
     }
 
     // ── Test Adapter execute — concurrent execution guard ────────────
@@ -698,10 +781,14 @@ mod tests {
     #[tokio::test]
     async fn adapter_rejects_concurrent_execution() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         // First execution — uses a pending future so it never completes.
         let ctrl1 = exec_control_from_kinds(vec![], "exec-id-first");
@@ -739,7 +826,7 @@ mod tests {
             },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let ctrl = exec_control_from_kinds(vec![ExecutionEventKind::ControlGone], "exec-id");
         let result = operation::Operation::execute(&mut adapter, default_exec_args(), ctrl);
@@ -758,7 +845,11 @@ mod tests {
     #[tokio::test]
     async fn adapter_report_status_with_accumulated_errors() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| {
                 Err(common::Error::from_error(
                     common::sovd::GenericError::from_code(
@@ -768,21 +859,21 @@ mod tests {
                 ))
             },
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let captured_details: Arc<Mutex<Option<ExecutionStatusDetails>>> =
             Arc::new(Mutex::new(None));
         let cd = captured_details.clone();
 
         // ReportStatus after a failed Stop should show accumulated errors.
-        let report_event = ExecutionEvent::from_kind(ExecutionEventKind::ReportStatus)
+        let report_event = ExecutionEvent::new(ExecutionEventKind::ReportStatus)
             .with_status_reporter(move |_status, details| {
                 *cd.lock().unwrap() = Some(details);
             });
         let events = vec![
-            ExecutionEvent::from_kind(ExecutionEventKind::Stop),
+            ExecutionEvent::new(ExecutionEventKind::Stop),
             report_event,
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =
@@ -809,14 +900,18 @@ mod tests {
     #[tokio::test]
     async fn adapter_control_gone_after_stop_preserves_stopped_status() {
         let op = MockSimpleOp::new(
-            |_| ExecutionHandle::from_future(Box::pin(futures::future::pending())),
+            |_| {
+                Ok(ExecutionHandle::from_future(Box::pin(
+                    futures::future::pending(),
+                )))
+            },
             |_| Ok(None),
         );
-        let mut adapter = SimpleOperationAdapter::from(op);
+        let mut adapter = SimpleOperationAdapter::new(op);
 
         let events = vec![
-            ExecutionEvent::from_kind(ExecutionEventKind::Stop),
-            ExecutionEvent::from_kind(ExecutionEventKind::ControlGone),
+            ExecutionEvent::new(ExecutionEventKind::Stop),
+            ExecutionEvent::new(ExecutionEventKind::ControlGone),
         ];
         let ctrl = exec_control_from_events(events, "exec-id");
         let handle =

@@ -11,15 +11,35 @@
 # SPDX-License-Identifier: Apache-2.0
 # *******************************************************************************
 
-load("@rules_rust//rust:defs.bzl", "rust_test")
+load("@rules_rust//rust:defs.bzl", "rust_library", "rust_test")
+
+rust_library(
+    name = "lib_runtime",
+    srcs = ["lib_runtime.rs"],
+    deps = [
+        "//score/mw/diag/api",
+        "@crate_index//:futures",
+        "@crate_index//:indexmap",
+        "@crate_index//:tokio",
+    ],
+)
+
+rust_library(
+    name = "diag_runtime",
+    srcs = ["diag_runtime.rs"],
+    deps = [
+        ":lib_runtime",
+    ],
+)
 
 rust_test(
     name = "example",
     srcs = ["example.rs"],
     features = ["link_std_cpp_lib"],
     deps = [
+        ":diag_runtime",
         "//score/mw/diag/api",
-        "//score/mw/diag/runtime",
+        "@crate_index//:futures",
         "@crate_index//:tokio",
     ],
 )
