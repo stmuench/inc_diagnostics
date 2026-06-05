@@ -11,7 +11,7 @@ At a high level, the intended usage pattern is:
 3. Let the runtime manage them internally as SOVD-style data resources or operations.
 4. Optionally reuse the provided UDS adapters instead of writing the higher-level SOVD-facing wrappers yourself.
 
-The examples in [../examples/examples.rs](../examples/examples.rs) demonstrate some patterns end to end.
+The examples in [../example/example.rs](../example/example.rs) demonstrate some patterns end to end.
 
 ## API Surface
 
@@ -470,9 +470,18 @@ let operation = SimpleOperationAdapter::new(RoutineControlAdapter::new(MyRoutine
 - Produces a `DiagnosticServicesCollection` whose lifetime is tied to the provided entity
 
 **DiagnosticServicesCollection**
-- Manages service lifetime and maintains the runtime connection
-- Lifetime is bound to the provided entity (supports non-`'static` entity types)
-- Passed to the binding layer for runtime integration
+- Consumed (moved into) `ServiceRegistrar::register_sovd_services` / `register_uds_services`
+- All internal instances are freed after the call returns
+
+**ServiceRegistrar**
+- Binding layer trait implemented by the runtime — user code never touches the runtime directly
+- Both registration methods return a `RegistrationHandle`
+
+**RegistrationHandle**
+- The application **must store this value** for as long as the registered services
+  should remain active
+- Dropping the handle automatically deregisters all associated services — no explicit
+  `remove_entity()` call is needed
 
 ### Intended Registration Pattern
 
@@ -480,20 +489,39 @@ Use `DiagnosticServicesCollectionBuilder` to bundle services before registration
 
 ```rust,ignore
 // SOVD: requires DiagnosticEntity
-let collection = DiagnosticServicesCollectionBuilder::new(my_entity)
+use diag_api::sovd::registration::{
+    DiagnosticServicesCollectionBuilder, ServiceRegistrar, RegistrationHandle,
+};
+
+// build a SOVD collection (entity + data resources + operations)
+let sovd_collection = DiagnosticServicesCollectionBuilder::new(my_entity)
     .with_read_resource(resource, metadata, schema)
     .with_operation("op", operation, op_metadata)
     .build()?;
 
-// UDS: no entity required
-let collection = DiagnosticServicesCollectionBuilder::new()
+// register with the runtime via ServiceRegistrar
+//           store the returned handle — drop = automatic deregistration
+let _sovd_handle: RegistrationHandle = registrar.register_sovd_services(sovd_collection)?;
+
+// same pattern for UDS: no entity required
+let uds_collection = uds::UdsServicesCollectionBuilder::new()
     .with_read_did("F190", VinDid)
     .with_routine("0301", MyRoutine::new())
     .build()?;
+
+let _uds_handle: RegistrationHandle = registrar.register_uds_services(uds_collection)?;
+
+// Services remain registered while _sovd_handle and _uds_handle are alive.
+// Both are deregistered automatically when they go out of scope.
 ```
+**Important:** If the handle is dropped immediately, services are deregistered before any request can be served. Always bind the handle to a named variable with the appropriate scope.
+
+The example test code in [../example/example.rs](../example/example.rs) shows the full
+end-to-end flow including a `RuntimeServiceRegistrar` implementation that bridges the
+builder collection into the runtime and issues a deregistration closure into the handle.
 
 Alternatively, register directly on runtime entities:
-The example test code in [../examples/examples.rs](../examples/examples.rs) shows the expected runtime integration point:
+The example test code in [../example/example.rs](../example/example.rs) shows the expected runtime integration point:
 
 ```rust
 use diag_api::sovd::data_resource::{DataCategory, DataResourceMetadata};
@@ -615,4 +643,4 @@ For the concrete implementations which the above guide described, see:
 - [simple_operation.rs](../api/simple_operation.rs)
 - [uds.rs](../api/uds.rs)
 - [uds_adapters.rs](../api/uds_adapters.rs)
-- [../examples/examples.rs](../examples/examples.rs)
+- [../example/example.rs](../example/example.rs)
