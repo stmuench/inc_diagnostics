@@ -11,13 +11,14 @@
  * SPDX-License-Identifier: Apache-2.0
  ********************************************************************************/
 
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 
-use ::common::{Error, Result};
+use ::common::{Error, JsonSchema, Result};
 
+use ::data_resource::sovd::DataResourceMetadata;
 use ::data_resource::{DataResource, ReadOnlyDataResource, WritableDataResource};
-use ::operation::Operation;
-use ::uds::{ReadDataByIdentifier, WriteDataByIdentifier, RoutineControl};
+use ::operation::{Operation, OperationMetadata};
+use ::uds::{DataIdentifier, ReadDataByIdentifier, RoutineControl, WriteDataByIdentifier};
 
 // ============================================================================
 // SOVD Builder Pattern
@@ -29,64 +30,95 @@ pub trait DiagnosticEntity {
     fn entity_id(&self) -> &str;
 }
 
-/// SOVD Service Collection Builder with fluent API for service registration
+/// SOVD Service Collection Builder with fluent API for assembling an entity's services
+///
+/// Each data-resource method takes the instance, its [`DataResourceMetadata`]
+/// (which carries the resource `id`), and a JSON schema describing the payload.
+/// Each operation method takes a separate `id` string plus [`OperationMetadata`].
 pub struct DiagnosticServicesCollectionBuilder<'entity> {
     entity: Box<dyn DiagnosticEntity + Send + Sync + 'entity>,
-    read_resources: IndexMap<String, Box<dyn ReadOnlyDataResource + Send + Sync + 'static>>,
-    write_resources: IndexMap<String, Box<dyn WritableDataResource + Send + 'static>>,
-    data_resources: IndexMap<String, Box<dyn DataResource + Send + Sync + 'static>>,
-    operations: IndexMap<String, Box<dyn Operation + Send + Sync + 'static>>,
+
+    // Metadata stored separately from instances so the collection can expose
+    // clean &IndexMap<String, (DataResourceMetadata, JsonSchema)> without any
+    // Box<dyn Trait> leaking into the public API.
+    read_resource_metadata:  IndexMap<String, (DataResourceMetadata, JsonSchema)>,
+    write_resource_metadata: IndexMap<String, (DataResourceMetadata, JsonSchema)>,
+    data_resource_metadata:  IndexMap<String, (DataResourceMetadata, JsonSchema)>,
+    operation_metadata:      IndexMap<String, OperationMetadata>,
+
+    read_resource_instances:  IndexMap<String, Box<dyn ReadOnlyDataResource  + Send + Sync + 'static>>,
+    write_resource_instances: IndexMap<String, Box<dyn WritableDataResource  + Send + 'static>>,
+    data_resource_instances:  IndexMap<String, Box<dyn DataResource          + Send + Sync + 'static>>,
+    operation_instances:      IndexMap<String, Box<dyn Operation             + Send + Sync + 'static>>,
 }
 
 impl<'entity> DiagnosticServicesCollectionBuilder<'entity> {
-    /// Creates a new SOVD services builder
+    /// Creates a new SOVD services builder, taking ownership of the entity.
     pub fn new<T: DiagnosticEntity + Send + Sync + 'entity>(entity: T) -> Self {
         Self {
             entity: Box::new(entity),
-            read_resources: IndexMap::new(),
-            write_resources: IndexMap::new(),
-            data_resources: IndexMap::new(),
-            operations: IndexMap::new(),
+            read_resource_metadata:  IndexMap::new(),
+            write_resource_metadata: IndexMap::new(),
+            data_resource_metadata:  IndexMap::new(),
+            operation_metadata:      IndexMap::new(),
+            read_resource_instances:  IndexMap::new(),
+            write_resource_instances: IndexMap::new(),
+            data_resource_instances:  IndexMap::new(),
+            operation_instances:      IndexMap::new(),
         }
     }
 
-    /// Registers a read-only data resource
+    /// Registers a read-only data resource.  The resource ID is taken from `metadata.id`.
     pub fn with_read_resource<T: ReadOnlyDataResource + Send + Sync + 'static>(
         mut self,
-        id: impl Into<String>,
         resource: T,
+        metadata: DataResourceMetadata,
+        schema: JsonSchema,
     ) -> Self {
-        self.read_resources.insert(id.into(), Box::new(resource));
+        let id = metadata.id.clone();
+        self.read_resource_instances.insert(id.clone(), Box::new(resource));
+        self.read_resource_metadata.insert(id, (metadata, schema));
         self
     }
 
-    /// Registers a write-only data resource
+    /// Registers a write-only data resource.  The resource ID is taken from `metadata.id`.
     pub fn with_write_resource<T: WritableDataResource + Send + 'static>(
         mut self,
-        id: impl Into<String>,
         resource: T,
+        metadata: DataResourceMetadata,
+        schema: JsonSchema,
     ) -> Self {
-        self.write_resources.insert(id.into(), Box::new(resource));
+        let id = metadata.id.clone();
+        self.write_resource_instances.insert(id.clone(), Box::new(resource));
+        self.write_resource_metadata.insert(id, (metadata, schema));
         self
     }
 
-    /// Registers a read-write data resource
+    /// Registers a read-write data resource.  The resource ID is taken from `metadata.id`.
     pub fn with_data_resource<T: DataResource + Send + Sync + 'static>(
         mut self,
-        id: impl Into<String>,
         resource: T,
+        metadata: DataResourceMetadata,
+        schema: JsonSchema,
     ) -> Self {
-        self.data_resources.insert(id.into(), Box::new(resource));
+        let id = metadata.id.clone();
+        self.data_resource_instances.insert(id.clone(), Box::new(resource));
+        self.data_resource_metadata.insert(id, (metadata, schema));
         self
     }
 
     /// Registers an operation
+    ///
+    /// `id` identifies the operation; `metadata` carries its runtime-visible attributes.
     pub fn with_operation<T: Operation + Send + Sync + 'static>(
         mut self,
         id: impl Into<String>,
         operation: T,
+        metadata: OperationMetadata,
     ) -> Self {
-        self.operations.insert(id.into(), Box::new(operation));
+        let id = id.into();
+        self.operation_instances.insert(id.clone(), Box::new(operation));
+        self.operation_metadata.insert(id, metadata);
         self
     }
 
@@ -95,67 +127,154 @@ impl<'entity> DiagnosticServicesCollectionBuilder<'entity> {
         self.validate()?;
         Ok(DiagnosticServicesCollection {
             entity: self.entity,
-            read_resources: self.read_resources,
-            write_resources: self.write_resources,
-            data_resources: self.data_resources,
-            operations: self.operations,
+            read_resource_metadata:  self.read_resource_metadata,
+            write_resource_metadata: self.write_resource_metadata,
+            data_resource_metadata:  self.data_resource_metadata,
+            operation_metadata:      self.operation_metadata,
+            read_resource_instances:  self.read_resource_instances,
+            write_resource_instances: self.write_resource_instances,
+            data_resource_instances:  self.data_resource_instances,
+            operation_instances:      self.operation_instances,
         })
     }
 
     fn validate(&self) -> Result<()> {
-        let all_ids: Vec<_> = self.read_resources.keys()
-            .chain(self.write_resources.keys())
-            .chain(self.data_resources.keys())
-            .chain(self.operations.keys())
+        let all_ids: Vec<_> = self
+            .read_resource_metadata.keys()
+            .chain(self.write_resource_metadata.keys())
+            .chain(self.data_resource_metadata.keys())
+            .chain(self.operation_metadata.keys())
             .collect();
         let unique: std::collections::HashSet<_> = all_ids.iter().collect();
         if unique.len() != all_ids.len() {
-            return Err(Error::from_error(
-                ::common::sovd::GenericError::from_code(
-                    ::common::sovd::ErrorCode::SovdServerMisconfigured,
-                    "Duplicate service ID detected".to_string(),
-                ),
-            ));
+            return Err(Error::from_error(::common::sovd::GenericError::from_code(
+                ::common::sovd::ErrorCode::SovdServerMisconfigured,
+                "Duplicate service ID detected".to_string(),
+            )));
         }
         Ok(())
     }
 }
 
-/// SOVD Services Collection from builder pattern
+// ============================================================================
+// SOVD Services Collection
+// ============================================================================
+
+/// Collection produced by [`DiagnosticServicesCollectionBuilder`].
 ///
-/// Contains registered services for an entity with access methods
+/// Storage is split into two layers:
+/// - **Metadata maps** (`read_resources()`, `data_resources()`, …) — clean
+///   `&IndexMap<String, (DataResourceMetadata, JsonSchema)>` with no dyn traits;
+///   callers can use the full IndexMap API (`.len()`, `.contains_key()`,
+///   `.iter()`, `.get()`, etc.).
+/// - **Instance getters** (`get_read_resource(id)`, …) — encapsulate the
+///   `Box<dyn Trait>` so it never appears in any public signature.
+///
+/// The [`ServiceRegistrar`] iterates the metadata map to populate the runtime
+/// and calls instance getters when it needs to dispatch to the actual implementation.
 pub struct DiagnosticServicesCollection<'entity> {
     entity: Box<dyn DiagnosticEntity + Send + Sync + 'entity>,
-    read_resources: IndexMap<String, Box<dyn ReadOnlyDataResource + Send + Sync + 'static>>,
-    write_resources: IndexMap<String, Box<dyn WritableDataResource + Send + 'static>>,
-    data_resources: IndexMap<String, Box<dyn DataResource + Send + Sync + 'static>>,
-    operations: IndexMap<String, Box<dyn Operation + Send + Sync + 'static>>,
+
+    // Public metadata maps — no dyn traits
+    read_resource_metadata:  IndexMap<String, (DataResourceMetadata, JsonSchema)>,
+    write_resource_metadata: IndexMap<String, (DataResourceMetadata, JsonSchema)>,
+    data_resource_metadata:  IndexMap<String, (DataResourceMetadata, JsonSchema)>,
+    operation_metadata:      IndexMap<String, OperationMetadata>,
+
+    // Private instance maps — accessed only through per-item getters
+    read_resource_instances:  IndexMap<String, Box<dyn ReadOnlyDataResource  + Send + Sync + 'static>>,
+    write_resource_instances: IndexMap<String, Box<dyn WritableDataResource  + Send + 'static>>,
+    data_resource_instances:  IndexMap<String, Box<dyn DataResource          + Send + Sync + 'static>>,
+    operation_instances:      IndexMap<String, Box<dyn Operation             + Send + Sync + 'static>>,
 }
 
 impl<'entity> DiagnosticServicesCollection<'entity> {
-    /// Returns reference to the entity
+    /// Returns reference to the registered entity
     pub fn entity(&self) -> &(dyn DiagnosticEntity + Send + Sync) {
         &*self.entity
     }
 
     /// Returns all registered read resources
-    pub fn get_read_resources(&self) -> &IndexMap<String, Box<dyn ReadOnlyDataResource + Send + Sync + 'static>> {
-        &self.read_resources
+    pub fn read_resources(&self) -> &IndexMap<String, (DataResourceMetadata, JsonSchema)> {
+        &self.read_resource_metadata
     }
 
-    /// Returns all registered write resources (mutable)
-    pub fn get_write_resources_mut(&mut self) -> &mut IndexMap<String, Box<dyn WritableDataResource + Send + 'static>> {
-        &mut self.write_resources
+    /// Returns all registered write resources
+    pub fn write_resources(&self) -> &IndexMap<String, (DataResourceMetadata, JsonSchema)> {
+        &self.write_resource_metadata
     }
 
-    /// Returns all registered data resources
-    pub fn get_data_resources(&self) -> &IndexMap<String, Box<dyn DataResource + Send + Sync + 'static>> {
-        &self.data_resources
+    /// Returns all registered read-write data resource
+    pub fn data_resources(&self) -> &IndexMap<String, (DataResourceMetadata, JsonSchema)> {
+        &self.data_resource_metadata
     }
 
     /// Returns all registered operations
-    pub fn get_operations(&self) -> &IndexMap<String, Box<dyn Operation + Send + Sync + 'static>> {
-        &self.operations
+    pub fn operations(&self) -> &IndexMap<String, OperationMetadata> {
+        &self.operation_metadata
+    }
+
+    // ------------------------------------------------------------------
+    // Per-item instance getters — encapsulate Box<dyn Trait>.
+    // Use the metadata maps above to iterate registered services;
+    // use these getters when the runtime needs to invoke the instance.
+    // ------------------------------------------------------------------
+
+    /// Returns the read-only resource instance for the given id.
+    pub fn get_read_resource(&self, id: &str) -> Option<&dyn ReadOnlyDataResource> {
+        self.read_resource_instances.get(id).map(|r| r.as_ref())
+    }
+
+    /// Returns a mutable reference to the write resource instance for the given id.
+    pub fn get_write_resource_mut(&mut self, id: &str) -> Option<&mut dyn WritableDataResource> {
+        self.write_resource_instances.get_mut(id).map(|r| r.as_mut())
+    }
+
+    /// Returns the data resource instance for the given id.
+    pub fn get_data_resource(&self, id: &str) -> Option<&dyn DataResource> {
+        self.data_resource_instances.get(id).map(|r| r.as_ref())
+    }
+
+    /// Returns the operation instance for the given id.
+    pub fn get_operation(&self, id: &str) -> Option<&dyn Operation> {
+        self.operation_instances.get(id).map(|r| r.as_ref())
+    }
+
+    /// Returns a mutable reference to the operation instance for the given id.
+    pub fn get_operation_mut(&mut self, id: &str) -> Option<&mut dyn Operation> {
+        self.operation_instances.get_mut(id).map(|r| r.as_mut())
+    }
+}
+
+// ============================================================================
+// Registration Handles — RAII lifetime guards
+// ============================================================================
+
+/// RAII handle for diagnostic service registration (SOVD or UDS).
+///
+/// The application **must** keep this handle alive for as long as the registered
+/// services should remain active.  Dropping the handle automatically signals
+/// the runtime to deregister all associated services — no manual cleanup needed.
+///
+/// Both [`ServiceRegistrar::register_sovd_services`] and
+/// [`ServiceRegistrar::register_uds_services`] return this same type.
+pub struct RegistrationHandle {
+    deregister: Option<Box<dyn FnOnce() + Send>>,
+}
+
+impl RegistrationHandle {
+    /// Creates a new handle with a deregistration callback.
+    /// Called by the runtime implementation — not by application code.
+    pub fn new(deregister: impl FnOnce() + Send + 'static) -> Self {
+        Self { deregister: Some(Box::new(deregister)) }
+    }
+}
+
+impl Drop for RegistrationHandle {
+    fn drop(&mut self) {
+        if let Some(f) = self.deregister.take() {
+            f();
+        }
     }
 }
 
@@ -165,15 +284,22 @@ impl<'entity> DiagnosticServicesCollection<'entity> {
 
 /// Binding layer between user-built service collections and the runtime.
 /// User code obtains a [`ServiceRegistrar`] from the runtime and passes collections to it.
+/// The runtime implements this trait internally; user code never touches the runtime directly.
+/// 
+/// Both registration methods return a [`RegistrationHandle`].  The application
+/// must store the handle — dropping it automatically deregisters all associated
+/// services.
 pub trait ServiceRegistrar {
-    /// Registers a SOVD service collection for the given entity with the runtime.
+    /// Registers a SOVD service collection (entity + data resources + operations).
+    /// Returns a [`RegistrationHandle`] that keeps services registered for its lifetime.
     fn register_sovd_services<'entity>(
         &self,
         collection: DiagnosticServicesCollection<'entity>,
-    ) -> Result<()>;
+    ) -> Result<RegistrationHandle>;
 
-    /// Registers a UDS service collection (DIDs and routines) with the runtime.
-    fn register_uds_services(&self, collection: UdsServicesCollection) -> Result<()>;
+    /// Registers a UDS service collection (DIDs + routines).
+    /// Returns a [`RegistrationHandle`] that keeps services registered for its lifetime.
+    fn register_uds_services(&self, collection: UdsServicesCollection) -> Result<RegistrationHandle>;
 }
 
 // ============================================================================
@@ -183,19 +309,26 @@ pub trait ServiceRegistrar {
 /// Entity-agnostic builder for UDS diagnostic services (DIDs and routines)
 #[derive(Default)]
 pub struct UdsServicesCollectionBuilder {
-    read_dids: IndexMap<String, Box<dyn ReadDataByIdentifier + Send + 'static>>,
-    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier + Send + 'static>>,
-    routines: IndexMap<String, Box<dyn RoutineControl + Send + 'static>>,
+    data_ids:   IndexMap<String, Box<dyn DataIdentifier           + Send + 'static>>,
+    read_dids:  IndexMap<String, Box<dyn ReadDataByIdentifier     + Send + 'static>>,
+    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier    + Send + 'static>>,
+    routines:   IndexMap<String, Box<dyn RoutineControl           + Send + 'static>>,
 }
 
 impl UdsServicesCollectionBuilder {
     /// Creates a new UDS services builder
     pub fn new() -> Self {
-        Self {
-            read_dids: IndexMap::new(),
-            write_dids: IndexMap::new(),
-            routines: IndexMap::new(),
-        }
+        Self::default()
+    }
+
+    /// Registers a combined read+write Data Identifier.
+    pub fn with_data_id<T: DataIdentifier + Send + 'static>(
+        mut self,
+        id: impl Into<String>,
+        service: T,
+    ) -> Self {
+        self.data_ids.insert(id.into(), Box::new(service));
+        self
     }
 
     /// Registers a read Data Identifier (DID)
@@ -231,26 +364,36 @@ impl UdsServicesCollectionBuilder {
     /// Builds and returns the final UdsServicesCollection
     pub fn build(self) -> Result<UdsServicesCollection> {
         self.validate()?;
+        // Derive ID sets from the instance maps — no duplicate storage needed in the builder.
+        let data_id_keys:   IndexSet<String> = self.data_ids.keys().cloned().collect();
+        let read_did_keys:  IndexSet<String> = self.read_dids.keys().cloned().collect();
+        let write_did_keys: IndexSet<String> = self.write_dids.keys().cloned().collect();
+        let routine_keys:   IndexSet<String> = self.routines.keys().cloned().collect();
         Ok(UdsServicesCollection {
-            read_dids: self.read_dids,
+            data_id_keys,
+            read_did_keys,
+            write_did_keys,
+            routine_keys,
+            data_ids:   self.data_ids,
+            read_dids:  self.read_dids,
             write_dids: self.write_dids,
-            routines: self.routines,
+            routines:   self.routines,
         })
     }
 
     fn validate(&self) -> Result<()> {
-        let all_ids: Vec<_> = self.read_dids.keys()
+        let all_ids: Vec<_> = self
+            .data_ids.keys()
+            .chain(self.read_dids.keys())
             .chain(self.write_dids.keys())
             .chain(self.routines.keys())
             .collect();
         let unique: std::collections::HashSet<_> = all_ids.iter().collect();
         if unique.len() != all_ids.len() {
-            return Err(Error::from_error(
-                ::common::sovd::GenericError::from_code(
-                    ::common::sovd::ErrorCode::SovdServerMisconfigured,
-                    "Duplicate service ID detected".to_string(),
-                ),
-            ));
+            return Err(Error::from_error(::common::sovd::GenericError::from_code(
+                ::common::sovd::ErrorCode::SovdServerMisconfigured,
+                "Duplicate service ID detected".to_string(),
+            )));
         }
         Ok(())
     }
@@ -258,71 +401,223 @@ impl UdsServicesCollectionBuilder {
 
 /// UDS Services Collection from builder pattern
 pub struct UdsServicesCollection {
-    read_dids: IndexMap<String, Box<dyn ReadDataByIdentifier + Send + 'static>>,
-    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier + Send + 'static>>,
-    routines: IndexMap<String, Box<dyn RoutineControl + Send + 'static>>,
+    // ID sets — full IndexSet API (len, contains, iter, is_empty) with no dyn traits
+    data_id_keys:   IndexSet<String>,
+    read_did_keys:  IndexSet<String>,
+    write_did_keys: IndexSet<String>,
+    routine_keys:   IndexSet<String>,
+
+    // Instance maps — accessed only through per-item getters
+    data_ids:   IndexMap<String, Box<dyn DataIdentifier           + Send + 'static>>,
+    read_dids:  IndexMap<String, Box<dyn ReadDataByIdentifier     + Send + 'static>>,
+    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier    + Send + 'static>>,
+    routines:   IndexMap<String, Box<dyn RoutineControl           + Send + 'static>>,
 }
 
 impl UdsServicesCollection {
-    /// Returns all registered read DIDs
-    pub fn get_read_dids(&self) -> &IndexMap<String, Box<dyn ReadDataByIdentifier + Send + 'static>> {
-        &self.read_dids
+    /// Returns the combined read+write DID instance for the given id.
+    pub fn get_data_id(&self, id: &str) -> Option<&dyn DataIdentifier> {
+        self.data_ids.get(id).map(|r| r.as_ref())
     }
 
-    /// Returns all registered write DIDs (mutable)
-    pub fn get_write_dids_mut(&mut self) -> &mut IndexMap<String, Box<dyn WriteDataByIdentifier + Send + 'static>> {
-        &mut self.write_dids
+    /// Returns the read DID instance for the given id.
+    pub fn get_read_did(&self, id: &str) -> Option<&dyn ReadDataByIdentifier> {
+        self.read_dids.get(id).map(|r| r.as_ref())
     }
 
-    /// Returns all registered routines
-    pub fn get_routines(&self) -> &IndexMap<String, Box<dyn RoutineControl + Send + 'static>> {
-        &self.routines
+    /// Returns a mutable reference to the write DID instance for the given id.
+    pub fn get_write_did_mut(&mut self, id: &str) -> Option<&mut dyn WriteDataByIdentifier> {
+        self.write_dids.get_mut(id).map(|r| r.as_mut())
     }
+
+    /// Returns the routine instance for the given id.
+    pub fn get_routine(&self, id: &str) -> Option<&dyn RoutineControl> {
+        self.routines.get(id).map(|r| r.as_ref())
+    }
+
+    /// Returns a mutable reference to the routine instance for the given id.
+    pub fn get_routine_mut(&mut self, id: &str) -> Option<&mut dyn RoutineControl> {
+        self.routines.get_mut(id).map(|r| r.as_mut())
+    }
+
+    // ------------------------------------------------------------------
+    // ID sets — full IndexSet API available to callers (len, contains,
+    // iter, is_empty, …).  No Box<dyn Trait> in any returned type.
+    // ------------------------------------------------------------------
+
+    /// Returns the set of registered combined read+write DID ids.
+    pub fn data_ids(&self) -> &IndexSet<String> { &self.data_id_keys }
+
+    /// Returns the set of registered read DID ids.
+    pub fn read_dids(&self) -> &IndexSet<String> { &self.read_did_keys }
+
+    /// Returns the set of registered write DID ids.
+    pub fn write_dids(&self) -> &IndexSet<String> { &self.write_did_keys }
+
+    /// Returns the set of registered routine ids.
+    pub fn routines(&self) -> &IndexSet<String> { &self.routine_keys }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::data_resource::sovd::DataCategory;
+    use ::data_resource::{ReadValueArgs, ReadValueHandle, ReadValueReply, WriteValueArgs, WriteValueHandle};
+    use ::operation::{ExecuteArguments, ExecutionControl, ExecutionHandle};
 
-    // Test entity for SOVD tests
-    struct TestEntity {
-        id: String,
+    // -----------------------------------------------------------------------
+    // Minimal stubs
+    // -----------------------------------------------------------------------
+
+    struct TestEntity { id: String }
+    impl DiagnosticEntity for TestEntity {
+        fn entity_id(&self) -> &str { &self.id }
     }
 
-    impl DiagnosticEntity for TestEntity {
-        fn entity_id(&self) -> &str {
-            &self.id
+    struct StubReadResource;
+    impl ::data_resource::ReadOnlyDataResource for StubReadResource {
+        fn read(&self, _: ReadValueArgs) -> ReadValueHandle {
+            ReadValueHandle::ready(ReadValueReply { data: ::common::ReplyMessagePayload::UTF8("ok".into()), errors: None })
         }
     }
 
-    // Basic SOVD Builder Tests
-    #[test]
-    fn test_sovd_collection_build() {
-        let entity = TestEntity {
-            id: "vehicle_001".to_string(),
-        };
-        let collection = DiagnosticServicesCollectionBuilder::new(entity)
-            .build()
-            .expect("Failed to build collection");
-
-        assert_eq!(collection.entity().entity_id(), "vehicle_001");
+    struct StubDataResource;
+    impl ::data_resource::DataResource for StubDataResource {
+        fn read(&self, _: ReadValueArgs) -> ReadValueHandle {
+            ReadValueHandle::ready(ReadValueReply { data: ::common::ReplyMessagePayload::UTF8("ok".into()), errors: None })
+        }
     }
 
-    // Basic UDS Builder Tests
-    #[test]
-    fn test_uds_builder_builds_empty_collection() {
-        let collection = UdsServicesCollectionBuilder::new()
-            .build()
-            .expect("Failed to build UDS collection");
-        assert!(collection.get_read_dids().is_empty());
-        assert!(collection.get_write_dids_mut().is_empty());
-        assert!(collection.get_routines().is_empty());
+    struct StubOperation;
+    impl ::operation::Operation for StubOperation {
+        fn execute(&mut self, _: ExecuteArguments, _: ExecutionControl) -> ::common::Result<ExecutionHandle> {
+            Ok(ExecutionHandle::from_closure(|| Ok(::common::DiagnosticReply::default())))
+        }
     }
 
+    struct StubRdbi;
+    impl ::uds::ReadDataByIdentifier for StubRdbi {
+        fn read(&self) -> ::common::Result<Vec<u8>> { Ok(vec![]) }
+    }
+
+    struct StubWdbi;
+    impl ::uds::WriteDataByIdentifier for StubWdbi {
+        fn write(&mut self, _: &[u8]) -> ::common::Result<()> { Ok(()) }
+    }
+
+    struct StubRoutine;
+    impl ::uds::RoutineControl for StubRoutine {
+        fn start(&mut self, _: Option<&[u8]>) -> ::common::Result<::uds::StartRoutine> {
+            ::uds::StartRoutine::from_closure(|| Ok(None), None)
+        }
+        fn stop(&mut self, _: Option<&[u8]>) -> ::common::Result<Option<Vec<u8>>> { Ok(None) }
+        fn completion_percentage(&self) -> Option<u8> { None }
+    }
+
+    fn stub_metadata(id: &str) -> DataResourceMetadata {
+        DataResourceMetadata {
+            id: id.to_string(), name: id.to_string(), translation_id: None,
+            read_only: true, category: DataCategory::CurrentData, groups: None,
+        }
+    }
+
+    fn stub_op_metadata() -> ::operation::OperationMetadata {
+        ::operation::OperationMetadata {
+            proximity_proof_required: false, synchronous_execution: true,
+            exclusive_execution: false, supported_modes: None,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // SOVD: empty collection builds and entity id is preserved
+    // -----------------------------------------------------------------------
     #[test]
-    fn test_uds_builder_default_equals_new() {
-        let _collection = UdsServicesCollectionBuilder::default()
-            .build()
-            .expect("Failed to build UDS collection with default");
+    fn test_sovd_build_empty() {
+        let c = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e1".into() })
+            .build().expect("empty build must succeed");
+        assert_eq!(c.entity().entity_id(), "e1");
+        assert!(c.read_resources().is_empty() && c.write_resources().is_empty()
+            && c.data_resources().is_empty() && c.operations().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // SOVD: registered services appear in metadata maps and per-item getters
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_sovd_build_with_services() {
+        let c = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e2".into() })
+            .with_read_resource(StubReadResource, stub_metadata("r1"), ::common::JsonSchema::Null)
+            .with_data_resource(StubDataResource, stub_metadata("d1"), ::common::JsonSchema::Null)
+            .with_operation("op1", StubOperation, stub_op_metadata())
+            .build().expect("build must succeed");
+
+        assert_eq!(c.read_resources().len(), 1);
+        assert_eq!(c.data_resources().len(), 1);
+        assert_eq!(c.operations().len(), 1);
+        assert!(c.get_read_resource("r1").is_some());
+        assert!(c.get_data_resource("d1").is_some());
+        assert!(c.get_operation("op1").is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // SOVD: duplicate ID across categories is rejected at build time
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_sovd_duplicate_id_rejected() {
+        let result = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e3".into() })
+            .with_read_resource(StubReadResource, stub_metadata("dup"), ::common::JsonSchema::Null)
+            .with_data_resource(StubDataResource, stub_metadata("dup"), ::common::JsonSchema::Null)
+            .build();
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // UDS: empty collection builds
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_uds_build_empty() {
+        let c = UdsServicesCollectionBuilder::new().build().expect("empty UDS build must succeed");
+        assert!(c.read_dids().is_empty() && c.write_dids().is_empty()
+            && c.data_ids().is_empty() && c.routines().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // UDS: registered services appear in IndexSets and per-item getters
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_uds_build_with_services() {
+        let c = UdsServicesCollectionBuilder::new()
+            .with_read_did("F190", StubRdbi)
+            .with_write_did("F191", StubWdbi)
+            .with_routine("0301", StubRoutine)
+            .build().expect("UDS build must succeed");
+
+        assert!(c.read_dids().contains("F190") && c.write_dids().contains("F191")
+            && c.routines().contains("0301"));
+        assert!(c.get_read_did("F190").is_some() && c.get_routine("0301").is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // UDS: duplicate ID across categories is rejected at build time
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_uds_duplicate_id_rejected() {
+        let result = UdsServicesCollectionBuilder::new()
+            .with_read_did("F190", StubRdbi)
+            .with_write_did("F190", StubWdbi)
+            .build();
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // RegistrationHandle: deregister closure runs exactly once on drop
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_registration_handle_deregisters_on_drop() {
+        use std::sync::{Arc, atomic::{AtomicU32, Ordering}};
+        let count = Arc::new(AtomicU32::new(0));
+        let c = Arc::clone(&count);
+        { let _h = RegistrationHandle::new(move || { c.fetch_add(1, Ordering::SeqCst); }); }
+        assert_eq!(count.load(Ordering::SeqCst), 1);
     }
 }

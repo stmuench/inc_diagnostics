@@ -1023,4 +1023,106 @@ mod tests {
 
         println!("DONE");
     }
+
+    //
+    // trigger execution of an operation which got implemented via the `uds::RoutineControl`
+    // API, attempt to stop it and request its results
+    //
+    #[tokio::test]
+    async fn test_execution_and_query_of_uds_routine() {
+        println!();
+
+        let runtime = setup_runtime();
+        let runtime_join_handle = tokio::spawn(runtime.run());
+
+        // register a UDS RoutineControl-based operation
+        let routine_completion = Arc::new(Notify::new());
+        let entity = runtime.get_or_create_entity(ENTITY_ID.to_string());
+        entity.register_operation(
+            SimpleOperationAdapter::new(RoutineControlAdapter::new(MyUdsRoutine {
+                completion: routine_completion.clone(),
+            })),
+            UDS_ROUTINE_OP_ID.to_string(),
+            OperationMetadata {
+                proximity_proof_required: false,
+                synchronous_execution: false,
+                exclusive_execution: false,
+                supported_modes: None,
+            },
+        );
+
+        // execute the routine
+        let exec_id = match runtime
+            .send(SOVDMessage::ExecuteOperation((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                None,
+            )))
+            .await
+        {
+            SOVDReply::ExecuteOperation(Ok(id)) => id,
+            other => panic!("Unexpected reply: {:?}", other),
+        };
+        println!("UDS routine executed, execution id: {}", exec_id);
+
+        // request current status of the execution (should be `Running`)
+        match runtime
+            .send(SOVDMessage::GetOperationExecutionStatus((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                exec_id.clone(),
+            )))
+            .await
+        {
+            SOVDReply::GetOperationExecutionStatus(Ok(status)) => {
+                assert_eq!(status, ExecutionStatus::Running);
+                println!("Execution status: {:?}", status);
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        // stop the execution
+        match runtime
+            .send(SOVDMessage::StopOperationExecution((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                exec_id.clone(),
+            )))
+            .await
+        {
+            SOVDReply::StopOperationExecution(Ok(())) => {
+                println!("UDS routine execution stopped successfully!");
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        // allow the spawned task to complete after stop
+        tokio::task::yield_now().await;
+
+        // check the execution result
+        match runtime
+            .send(SOVDMessage::GetOperationExecutionResult((
+                ENTITY_ID.to_string(),
+                UDS_ROUTINE_OP_ID.to_string(),
+                exec_id.clone(),
+            )))
+            .await
+        {
+            SOVDReply::GetOperationExecutionResult(Ok(exec_result)) => {
+                assert_eq!(
+                    exec_result,
+                    ExecutionResult::Ok(DiagnosticReply {
+                        message_payload: Some(ReplyMessagePayload::Binary(vec![0xCA, 0xFE])),
+                        additional_attrs: None,
+                    })
+                );
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        runtime.shutdown().await;
+        let _ = runtime_join_handle.await;
+
+        println!("DONE");
+    }
 }
