@@ -92,7 +92,16 @@ struct SovdEngineStatusResource {
 }
 
 impl DataResource for SovdEngineStatusResource {
-    fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle {
+        if !matches!(input.reply_encoding, ReplyMessageEncoding::JSON(_)) {
+            return ReadValueHandle::from_error(diag_api::Error::from_error(
+                diag_api::sovd::GenericError::from_code(
+                    diag_api::sovd::ErrorCode::PreconditionNotFulfilled,
+                    "This SOVD data resource only supports JSON encoding for its reply data!"
+                        .to_string(),
+                ),
+            ));
+        }
         match serde_json::to_value(&self.status) {
             Ok(json) => ReadValueHandle::ready(ReadValueReply {
                 data: ReplyMessagePayload::from_json(json, None),
@@ -849,7 +858,7 @@ mod tests {
 
     //
     // trigger execution of an operation which got implemented via the `uds::RoutineControl`
-    // API, attempt to stop it and request its results
+    // API, then stop it and check the execution result
     //
     #[tokio::test]
     async fn test_execution_and_query_of_uds_routine() {
@@ -1043,6 +1052,17 @@ mod tests {
             WriteValueHandle::Ready(result) => result.expect_err("invalid JSON must be rejected"),
             WriteValueHandle::Pending(_) => panic!("expected Ready"),
         };
+
+        // Non-JSON encoding must be rejected — this data resource is JSON-only.
+        match SovdEngineStatusResource { status: EngineStatus { running: true, temperature_celsius: 90 } }
+            .read(ReadValueArgs::new(ReplyMessageEncoding::Binary))
+        {
+            ReadValueHandle::Ready(Err(err)) => match err.code {
+                ErrorCode::SOVD(ref e) => assert_eq!(e.sovd_error, "precondition-not-fulfilled"),
+                _ => panic!("expected SOVD error"),
+            },
+            _ => panic!("expected Ready(Err(..))"),
+        }
 
         runtime.shutdown().await;
         let _ = runtime_join_handle.await;

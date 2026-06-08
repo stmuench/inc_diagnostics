@@ -378,4 +378,33 @@ mod tests {
             ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
         );
     }
+
+    // SerializationHelper: serialize_response delegates to UdsSerialize.
+    #[test]
+    fn serialization_helper_serialize_response() {
+        let bytes = SerializationHelper::serialize_response(&Speed { value: 0x0102 }).unwrap();
+        assert_eq!(bytes, vec![0x01, 0x02]);
+    }
+
+    // SerializationHelper: deserialize_request decodes bytes and invokes the provided handler closure.
+    #[test]
+    fn serialization_helper_deserialize_request() {
+        let mut received: Option<Speed> = None;
+        SerializationHelper::deserialize_request::<Speed, _>(&[0x00, 0x05], |v| {
+            received = Some(v);
+            Ok(())
+        })
+        .unwrap();
+        assert_eq!(received.unwrap().value, 5);
+    }
+
+    // SerializationHelper: deserialize_request propagates the NRC when input is too short.
+    #[test]
+    fn serialization_helper_deserialize_request_too_short() {
+        let result = SerializationHelper::deserialize_request::<Speed, _>(&[0x01], |_| Ok(()));
+        expect_nrc(
+            result.unwrap_err(),
+            ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+        );
+    }
 }
