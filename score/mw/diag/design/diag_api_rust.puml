@@ -452,7 +452,6 @@ package uds {
   interface RoutineHandler<T> <<trait>> {
     +start(&mut self, params: Option<T>) : DiagResult<Option<T>>
     +stop(&mut self, params: Option<T>) : DiagResult<Option<T>>
-    +results(&self) : DiagResult<Option<T>>
     +completion_percentage(&self) : Option<u8>
   }
 
