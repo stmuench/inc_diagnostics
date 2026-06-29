@@ -25,12 +25,30 @@ rust_library(
     name = "diag_api",
     srcs = ["diag_api.rs"],
     deps = [
+        ":app_registration",
         ":common",
         ":data_resource",
         ":operation",
         ":simple_operation",
         ":uds",
         ":uds_adapters",
+    ],
+)
+
+rust_library(
+    name = "app_registration",
+    srcs = ["app_registration.rs"],
+    deps = [
+        ":common",
+        "@crate_index//:futures",
+    ],
+)
+
+rust_test(
+    name = "app_registration_test",
+    crate = ":app_registration",
+    deps = [
+        "@crate_index//:tokio",
     ],
 )
 
