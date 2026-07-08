@@ -68,6 +68,7 @@
     "https://bcr.bazel.build/modules/bazel_features/1.28.0/MODULE.bazel": "4b4200e6cbf8fa335b2c3f43e1d6ef3e240319c33d43d60cc0fbd4b87ece299d",
     "https://bcr.bazel.build/modules/bazel_features/1.30.0/MODULE.bazel": "a14b62d05969a293b80257e72e597c2da7f717e1e69fa8b339703ed6731bec87",
     "https://bcr.bazel.build/modules/bazel_features/1.32.0/MODULE.bazel": "095d67022a58cb20f7e20e1aefecfa65257a222c18a938e2914fd257b5f1ccdc",
+    "https://bcr.bazel.build/modules/bazel_features/1.34.0/MODULE.bazel": "e8475ad7c8965542e0c7aac8af68eb48c4af904be3d614b6aa6274c092c2ea1e",
     "https://bcr.bazel.build/modules/bazel_features/1.4.1/MODULE.bazel": "e45b6bb2350aff3e442ae1111c555e27eac1d915e77775f6fdc4b351b758b5d7",
     "https://bcr.bazel.build/modules/bazel_features/1.43.0/MODULE.bazel": "defa2226f06ba20550d6548c3a2ea2a7929634437a52973869c20c225450eb91",
     "https://bcr.bazel.build/modules/bazel_features/1.43.0/source.json": "1c4207dc858d6de0eecef30026793616bbf420c74aac27b6bad212534a730437",
@@ -243,7 +244,8 @@
     "https://bcr.bazel.build/modules/rules_pkg/0.7.0/MODULE.bazel": "df99f03fc7934a4737122518bb87e667e62d780b610910f0447665a7e2be62dc",
     "https://bcr.bazel.build/modules/rules_pkg/1.0.1/MODULE.bazel": "5b1df97dbc29623bccdf2b0dcd0f5cb08e2f2c9050aab1092fd39a41e82686ff",
     "https://bcr.bazel.build/modules/rules_pkg/1.1.0/MODULE.bazel": "9db8031e71b6ef32d1846106e10dd0ee2deac042bd9a2de22b4761b0c3036453",
-    "https://bcr.bazel.build/modules/rules_pkg/1.1.0/source.json": "fef768df13a92ce6067e1cd0cdc47560dace01354f1d921cfb1d632511f7d608",
+    "https://bcr.bazel.build/modules/rules_pkg/1.2.0/MODULE.bazel": "c7db3c2b407e673c7a39e3625dc05dc9f12d6682cbd82a3a5924a13b491eda7e",
+    "https://bcr.bazel.build/modules/rules_pkg/1.2.0/source.json": "9062e00845bf91a4247465d371baa837adf9b6ff44c542f73ba084f07667e1dc",
     "https://bcr.bazel.build/modules/rules_proto/4.0.0/MODULE.bazel": "a7a7b6ce9bee418c1a760b3d84f83a299ad6952f9903c67f19e4edd964894e06",
     "https://bcr.bazel.build/modules/rules_proto/5.3.0-21.7/MODULE.bazel": "e8dff86b0971688790ae75528fe1813f71809b5afd57facb44dad9e8eca631b7",
     "https://bcr.bazel.build/modules/rules_proto/6.0.0-rc1/MODULE.bazel": "1e5b502e2e1a9e825eef74476a5a1ee524a92297085015a052510b09a1a09483",
@@ -292,7 +294,8 @@
     "https://bcr.bazel.build/modules/stardoc/0.7.2/source.json": "58b029e5e901d6802967754adf0a9056747e8176f017cfe3607c0851f4d42216",
     "https://bcr.bazel.build/modules/tar.bzl/0.2.1/MODULE.bazel": "52d1c00a80a8cc67acbd01649e83d8dd6a9dc426a6c0b754a04fe8c219c76468",
     "https://bcr.bazel.build/modules/tar.bzl/0.5.1/MODULE.bazel": "7c2eb3dcfc53b0f3d6f9acdfd911ca803eaf92aadf54f8ca6e4c1f3aee288351",
-    "https://bcr.bazel.build/modules/tar.bzl/0.5.1/source.json": "deed3094f7cc779ed1d37a68403847b0e38d9dd9d931e03cb90825f3368b515f",
+    "https://bcr.bazel.build/modules/tar.bzl/0.7.0/MODULE.bazel": "cc1acd85da33c80e430b65219a620d54d114628df24a618c3a5fa0b65e988da9",
+    "https://bcr.bazel.build/modules/tar.bzl/0.7.0/source.json": "9becb80306f42d4810bfa16379fb48aad0b01ce5342bc12fe47dcd6af3ac4d7a",
     "https://bcr.bazel.build/modules/toolchain_utils/1.0.2/MODULE.bazel": "9b8be503a4fcfd3b8b952525bff0869177a5234d5c35dc3e566b9f5ca2f755a1",
     "https://bcr.bazel.build/modules/toolchain_utils/1.0.2/source.json": "88769ec576dddacafd8cca4631812cf8eead89f10a29d9405d9f7a553de6bf87",
     "https://bcr.bazel.build/modules/toolchains_protoc/0.2.1/MODULE.bazel": "2f08433ff5e659069b3a1abfee2377d68f510f2de1da50678ed992c455b4ff91",
@@ -364,6 +367,7 @@
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.28.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.30.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.32.0/MODULE.bazel": "not found",
+    "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.34.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.4.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.43.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/bazel_features/1.9.0/MODULE.bazel": "not found",
@@ -510,6 +514,7 @@
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_pkg/0.7.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_pkg/1.0.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_pkg/1.1.0/MODULE.bazel": "not found",
+    "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_pkg/1.2.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_proto/4.0.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_proto/5.3.0-21.7/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/rules_proto/6.0.0-rc1/MODULE.bazel": "not found",
@@ -588,6 +593,8 @@
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_python_basics/0.3.1/MODULE.bazel": "99c491109937542e61df090222666a8613ef946fa7bb2b2d5ba648b2baba03ad",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_python_basics/0.3.2/MODULE.bazel": "f25490f64035a0e3a0d53ad9cb6164e8325ce6cf2a7ee68c6ae153840cb2497e",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_python_basics/0.3.4/MODULE.bazel": "53bd16dfbb1fb8ecf6822fb26f9f4e8333bac7b14d12bb02bf84078063820a31",
+    "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_rules_imagefs/0.0.3/MODULE.bazel": "d87fcd3485438284fa96d6a5a81923d6b6672468947423517cc43c4d7692ca6a",
+    "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_rules_imagefs/0.0.3/source.json": "5f2de07264fbc8f3adecffde5aea326b9f8fccf9e74fd6a057fc9c3556b00cfa",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_rust_policies/0.0.2/MODULE.bazel": "ade2bad4a331b02d9b7e7d9842e8de8c6fded6186486e02c4f7db5cd4b71d34d",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_rust_policies/0.0.2/source.json": "fbcbc738e652b0c68d5d28dd1db09f2e643dc111f5739b2f6af7ec56c2e88043",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/score_starpls_lsp/0.1.0/MODULE.bazel": "b2f8c4c8d8e851706255ff9002b448bff6e040b8f0c6adedbde2a09375aa16cc",
@@ -607,6 +614,7 @@
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/stardoc/0.7.2/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/tar.bzl/0.2.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/tar.bzl/0.5.1/MODULE.bazel": "not found",
+    "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/tar.bzl/0.7.0/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/toolchain_utils/1.0.2/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/toolchains_protoc/0.2.1/MODULE.bazel": "not found",
     "https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/modules/upb/0.0.0-20220923-a547704/MODULE.bazel": "not found",
@@ -7925,7 +7933,7 @@
     "@@score_bazel_cpp_toolchains+//extensions:gcc.bzl%gcc": {
       "general": {
         "bzlTransitiveDigest": "WckJdtmBj4dvQqRmwa1HS8bIMHIvcXOP/swYDIxXzTc=",
-        "usagesDigest": "znj+EPweun04kKCSgPSxHDT8evCPsJ/EYdg1kooe/iE=",
+        "usagesDigest": "yibPF9OA6kuWPhGLMRw6w/CE/wxMfxzyQ9Sy9tSFQfk=",
         "recordedFileInputs": {},
         "recordedDirentsInputs": {},
         "envVariables": {},
@@ -7939,6 +7947,28 @@
               "build_file": "@@score_bazel_cpp_toolchains+//packages/linux/x86_64/gcc/12.2.0:gcc.BUILD",
               "sha256": "e9b9a7a63a5f8271b76d6e2057906b95c7a244e4931a8e10edeaa241e9f7c11e",
               "strip_prefix": "x86_64-unknown-linux-gnu"
+            }
+          },
+          "score_qcc_aarch64_toolchain_pkg": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "urls": [
+                "https://www.qnx.com/download/download/79858/installation.tgz"
+              ],
+              "build_file": "@@score_bazel_cpp_toolchains+//packages/qnx/aarch64/sdp/8.0.0:sdp.BUILD",
+              "sha256": "f2e0cb21c6baddbcb65f6a70610ce498e7685de8ea2e0f1648f01b327f6bac63",
+              "strip_prefix": "installation"
+            }
+          },
+          "score_qcc_x86_64_toolchain_pkg": {
+            "repoRuleId": "@@bazel_tools//tools/build_defs/repo:http.bzl%http_archive",
+            "attributes": {
+              "urls": [
+                "https://www.qnx.com/download/download/79858/installation.tgz"
+              ],
+              "build_file": "@@score_bazel_cpp_toolchains+//packages/qnx/x86_64/sdp/8.0.0:sdp.BUILD",
+              "sha256": "f2e0cb21c6baddbcb65f6a70610ce498e7685de8ea2e0f1648f01b327f6bac63",
+              "strip_prefix": "installation"
             }
           },
           "score_gcc_x86_64_toolchain": {
@@ -7965,6 +7995,56 @@
               "cc_toolchain_flags": "@@score_bazel_cpp_toolchains+//templates/linux:cc_toolchain_flags.bzl.template",
               "use_base_constraints_only": false
             }
+          },
+          "score_qcc_aarch64_toolchain": {
+            "repoRuleId": "@@score_bazel_cpp_toolchains+//rules:gcc.bzl%gcc_toolchain",
+            "attributes": {
+              "extra_compile_flags": [],
+              "extra_c_compile_flags": [],
+              "extra_cxx_compile_flags": [],
+              "extra_link_flags": [],
+              "license_info_variable": "",
+              "license_info_value": "",
+              "license_path": "/opt/score_qnx/license/licenses",
+              "sdk_version": "",
+              "sdp_version": "8.0.0",
+              "tc_compiler_library_search_paths": [],
+              "tc_cpu": "aarch64",
+              "tc_identifier": "sdp_8.0.0",
+              "tc_os": "qnx",
+              "tc_pkg_repo": "score_qcc_aarch64_toolchain_pkg",
+              "tc_system_toolchain": false,
+              "tc_runtime_ecosystem": "",
+              "gcc_version": "12.2.0",
+              "cc_toolchain_config": "@@score_bazel_cpp_toolchains+//templates/qnx:cc_toolchain_config.bzl.template",
+              "cc_toolchain_flags": "@@score_bazel_cpp_toolchains+//templates/qnx:cc_toolchain_flags.bzl.template",
+              "use_base_constraints_only": false
+            }
+          },
+          "score_qcc_x86_64_toolchain": {
+            "repoRuleId": "@@score_bazel_cpp_toolchains+//rules:gcc.bzl%gcc_toolchain",
+            "attributes": {
+              "extra_compile_flags": [],
+              "extra_c_compile_flags": [],
+              "extra_cxx_compile_flags": [],
+              "extra_link_flags": [],
+              "license_info_variable": "",
+              "license_info_value": "",
+              "license_path": "/opt/score_qnx/license/licenses",
+              "sdk_version": "",
+              "sdp_version": "8.0.0",
+              "tc_compiler_library_search_paths": [],
+              "tc_cpu": "x86_64",
+              "tc_identifier": "sdp_8.0.0",
+              "tc_os": "qnx",
+              "tc_pkg_repo": "score_qcc_x86_64_toolchain_pkg",
+              "tc_system_toolchain": false,
+              "tc_runtime_ecosystem": "",
+              "gcc_version": "12.2.0",
+              "cc_toolchain_config": "@@score_bazel_cpp_toolchains+//templates/qnx:cc_toolchain_config.bzl.template",
+              "cc_toolchain_flags": "@@score_bazel_cpp_toolchains+//templates/qnx:cc_toolchain_flags.bzl.template",
+              "use_base_constraints_only": false
+            }
           }
         },
         "recordedRepoMappingEntries": [
@@ -7982,6 +8062,59 @@
             "score_bazel_cpp_toolchains+",
             "score_bazel_cpp_toolchains",
             "score_bazel_cpp_toolchains+"
+          ]
+        ]
+      }
+    },
+    "@@score_rules_imagefs+//extensions:imagefs.bzl%imagefs": {
+      "general": {
+        "bzlTransitiveDigest": "6ZLANe53LXwcnne1ZrZm9GkJ9H5VdsCLSgSNHyUrqA4=",
+        "usagesDigest": "0MH7fGUNhg06kzzP/5qa9/wNoDVHKWfFQK/6C+xSgOs=",
+        "recordedFileInputs": {},
+        "recordedDirentsInputs": {},
+        "envVariables": {},
+        "generatedRepoSpecs": {
+          "score_qnx_aarch64_ifs_toolchain": {
+            "repoRuleId": "@@score_rules_imagefs+//rules/qnx:imagefs_toolchain.bzl%imagefs_toolchain",
+            "attributes": {
+              "tc_cpu": "aarch64",
+              "tc_os": "qnx",
+              "tc_pkg_repo": "'@@score_bazel_cpp_toolchains++gcc+score_qcc_aarch64_toolchain_pkg'",
+              "sdp_version": "8.0.0",
+              "tc_type": "ifs"
+            }
+          },
+          "score_qnx_x86_64_ifs_toolchain": {
+            "repoRuleId": "@@score_rules_imagefs+//rules/qnx:imagefs_toolchain.bzl%imagefs_toolchain",
+            "attributes": {
+              "tc_cpu": "x86_64",
+              "tc_os": "qnx",
+              "tc_pkg_repo": "'@@score_bazel_cpp_toolchains++gcc+score_qcc_x86_64_toolchain_pkg'",
+              "sdp_version": "8.0.0",
+              "tc_type": "ifs"
+            }
+          }
+        },
+        "recordedRepoMappingEntries": [
+          [
+            "",
+            "score_qcc_aarch64_toolchain_pkg",
+            "score_bazel_cpp_toolchains++gcc+score_qcc_aarch64_toolchain_pkg"
+          ],
+          [
+            "",
+            "score_qcc_x86_64_toolchain_pkg",
+            "score_bazel_cpp_toolchains++gcc+score_qcc_x86_64_toolchain_pkg"
+          ],
+          [
+            "score_rules_imagefs+",
+            "bazel_tools",
+            "bazel_tools"
+          ],
+          [
+            "score_rules_imagefs+",
+            "score_rules_imagefs",
+            "score_rules_imagefs+"
           ]
         ]
       }
@@ -8220,60 +8353,6 @@
               "miri_sysroot_url": "https://github.com/eclipse-score/ferrocene_toolchain_builder/releases/download/1.2.0/miri-sysroot-779fbed05ae9e9fe2a04137929d99cc9b3d516fd-aarch64-unknown-nto-qnx800.tar.gz",
               "miri_sysroot_sha256": "8fc8f406c33a7dc31362133b8a2ffbb66b44f62354bfc98a3bc21a1fcbc9a7e6",
               "miri_sysroot_strip_prefix": "aarch64-unknown-nto-qnx800"
-            }
-          }
-        },
-        "recordedRepoMappingEntries": []
-      }
-    },
-    "@@tar.bzl+//tar:extensions.bzl%toolchains": {
-      "general": {
-        "bzlTransitiveDigest": "/2afh6fPjq/rcyE/jztQDK3ierehmFFngfvmqyRv72M=",
-        "usagesDigest": "maF8qsAIqeH1ey8pxP0gNZbvJt34kLZvTFeQ0ntrJVA=",
-        "recordedFileInputs": {},
-        "recordedDirentsInputs": {},
-        "envVariables": {},
-        "generatedRepoSpecs": {
-          "bsd_tar_toolchains": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:toolchain.bzl%tar_toolchains_repo",
-            "attributes": {
-              "user_repository_name": "bsd_tar_toolchains"
-            }
-          },
-          "bsd_tar_toolchains_darwin_amd64": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:platforms.bzl%bsdtar_binary_repo",
-            "attributes": {
-              "platform": "darwin_amd64"
-            }
-          },
-          "bsd_tar_toolchains_darwin_arm64": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:platforms.bzl%bsdtar_binary_repo",
-            "attributes": {
-              "platform": "darwin_arm64"
-            }
-          },
-          "bsd_tar_toolchains_linux_amd64": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:platforms.bzl%bsdtar_binary_repo",
-            "attributes": {
-              "platform": "linux_amd64"
-            }
-          },
-          "bsd_tar_toolchains_linux_arm64": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:platforms.bzl%bsdtar_binary_repo",
-            "attributes": {
-              "platform": "linux_arm64"
-            }
-          },
-          "bsd_tar_toolchains_windows_amd64": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:platforms.bzl%bsdtar_binary_repo",
-            "attributes": {
-              "platform": "windows_amd64"
-            }
-          },
-          "bsd_tar_toolchains_windows_arm64": {
-            "repoRuleId": "@@tar.bzl+//tar/toolchain:platforms.bzl%bsdtar_binary_repo",
-            "attributes": {
-              "platform": "windows_arm64"
             }
           }
         },
