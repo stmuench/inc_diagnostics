@@ -29,7 +29,7 @@ on:
 
 jobs:
   linux-build:
-    name: Build with bl-x86_64-linux
+    name: Build & test on host for target platform x86_64-linux
     runs-on: ubuntu-24.04
 
     steps:
@@ -50,7 +50,7 @@ jobs:
             TARGETS+=(//score/...)
           fi
 
-          bazel build --config=bl-x86_64-linux -- "${TARGETS[@]}"
+          bazel build --config=score_diag_x86_64_linux -- "${TARGETS[@]}"
 
       - name: Bazel Test
         run: |
@@ -61,4 +61,4 @@ jobs:
             TARGETS+=(//score/...)
           fi
 
-          bazel test --config=bl-x86_64-linux -- "${TARGETS[@]}"
+          bazel test --config=score_diag_x86_64_linux -- "${TARGETS[@]}"
