@@ -43,10 +43,9 @@ jobs:
 
       - name: Bazel Build
         run: |
-          TARGETS=(//examples/... //src/... //tests/...)
+          TARGETS=(//examples/... //tests/...)
 
-          # During migration to baselibs-like layout, include score targets only
-          # when score/ actually contains Bazel packages.
+          # consider //score/... targets only in case such directory actually contains any Bazel packages.
           if find score -type f \( -name BUILD -o -name BUILD.bazel \) | grep -q .; then
             TARGETS+=(//score/...)
           fi
@@ -55,10 +54,9 @@ jobs:
 
       - name: Bazel Test
         run: |
-          TARGETS=(//examples/... //src/... //tests/...)
+          TARGETS=(//examples/... //tests/...)
 
-          # During migration to baselibs-like layout, include score targets only
-          # when score/ actually contains Bazel packages.
+          # consider //score/... targets only in case such directory actually contains any Bazel packages.
           if find score -type f \( -name BUILD -o -name BUILD.bazel \) | grep -q .; then
             TARGETS+=(//score/...)
           fi
