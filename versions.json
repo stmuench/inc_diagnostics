@@ -2,5 +2,9 @@
   {
     "version": "main",
     "url": "https://stmuench.github.io/inc_diagnostics/main/"
+  },
+  {
+    "version": "pr-3",
+    "url": "https://stmuench.github.io/inc_diagnostics/pr-3/"
   }
 ]
