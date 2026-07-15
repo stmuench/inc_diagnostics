@@ -13,7 +13,7 @@
 
 use diag_api::sovd::data_resource::*;
 use diag_api::sovd::operation::*;
-use diag_api::uds::ReadDataByIdentifier;
+use diag_api::uds::{ReadDataByIdentifier, RoutineControl, RoutineControlAdapter, StartRoutine};
 use diag_api::Result as DiagResult;
 use diag_api::*;
 
@@ -32,6 +32,32 @@ struct MyReadDataByIdentifier {}
 impl ReadDataByIdentifier for MyReadDataByIdentifier {
     fn read(&self) -> DiagResult<Vec<u8>> {
         Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])
+    }
+}
+
+/********************************************/
+/* user implementation of a UDS routine     */
+/********************************************/
+
+struct MyUdsRoutine {
+    completion: Arc<Notify>,
+}
+
+impl RoutineControl for MyUdsRoutine {
+    fn start(&mut self, _input: Option<&[u8]>) -> DiagResult<StartRoutine> {
+        let completion = self.completion.clone();
+        StartRoutine::from_future(
+            async move {
+                completion.notified().await;
+                Ok(Some(vec![0xCA, 0xFE]))
+            },
+            Some(vec![0xBE, 0xEF]),
+        )
+    }
+
+    fn stop(&mut self, _input: Option<&[u8]>) -> DiagResult<Option<Vec<u8>>> {
+        self.completion.notify_one();
+        Ok(Some(vec![0xDE, 0xAD]))
     }
 }
 
@@ -269,6 +295,7 @@ mod tests {
     const ASYNC_OP_ID: &str = "my_async_op";
     const DATA_RESOURCE_ID: &str = "my_data_resource";
     const UDS_DATA_RESOURCE_ID: &str = "uds_data_resource";
+    const UDS_ROUTINE_OP_ID: &str = "my_uds_routine_op";
 
     /********************************************************************/
     /* Builder Pattern Demonstration Tests                              */
