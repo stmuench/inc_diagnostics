@@ -93,34 +93,6 @@ pub mod sovd {
             }
         }
 
-        pub fn from_code_with_translation(
-            code: ErrorCode,
-            message: String,
-            translation_id: String,
-        ) -> Self {
-            Self {
-                sovd_error: code.to_string(),
-                message_text: message,
-                vendor_error: None,
-                translation_id: Some(translation_id),
-                additional_attrs: None,
-            }
-        }
-
-        pub fn from_vendor_error_with_translation(
-            error: String,
-            message: String,
-            translation_id: String,
-        ) -> Self {
-            Self {
-                sovd_error: ErrorCode::VendorSpecific.to_string(),
-                message_text: message,
-                vendor_error: Some(error),
-                translation_id: Some(translation_id),
-                additional_attrs: None,
-            }
-        }
-
         pub fn with_translation_id(mut self, translation_id: String) -> Self {
             self.translation_id = Some(translation_id);
             self
@@ -129,16 +101,6 @@ pub mod sovd {
         pub fn with_additional_attrs(mut self, attrs: KeyValueAttributes) -> Self {
             self.additional_attrs = Some(attrs);
             self
-        }
-
-        pub fn add_additional_attr(&mut self, key: String, value: String) {
-            self.additional_attrs
-                .get_or_insert_with(KeyValueAttributes::new)
-                .insert(key, value);
-        }
-
-        pub fn set_additional_attrs(&mut self, attrs: KeyValueAttributes) {
-            self.additional_attrs = Some(attrs);
         }
     }
 
@@ -386,13 +348,8 @@ impl ReplyMessagePayload {
     }
 
     #[must_use]
-    pub fn from_json(payload: JsonValue) -> Self {
-        Self::JSON(payload, None)
-    }
-
-    #[must_use]
-    pub fn from_json_with_schema(payload: JsonValue, schema: JsonSchema) -> Self {
-        Self::JSON(payload, Some(schema))
+    pub fn from_json(payload: JsonValue, schema: Option<JsonSchema>) -> Self {
+        Self::JSON(payload, schema)
     }
 
     #[must_use]

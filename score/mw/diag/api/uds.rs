@@ -13,6 +13,8 @@
 
 use common::Result as DiagResult;
 use common::{ByteSlice, ByteVector};
+use std::future::Future;
+use std::pin::Pin;
 
 /// UDS ReadDataByIdentifier service (cf. ISO 14229-1:2020, Service 0x22).
 pub trait ReadDataByIdentifier {

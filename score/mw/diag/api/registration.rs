@@ -222,27 +222,27 @@ impl<'entity> DiagnosticServicesCollection<'entity> {
 
     /// Returns the read-only resource instance for the given id.
     pub fn get_read_resource(&self, id: &str) -> Option<&dyn ReadOnlyDataResource> {
-        self.read_resource_instances.get(id).map(|r| r.as_ref())
+        self.read_resource_instances.get(id).map(|r| r.as_ref() as &dyn ReadOnlyDataResource)
     }
 
     /// Returns a mutable reference to the write resource instance for the given id.
     pub fn get_write_resource_mut(&mut self, id: &str) -> Option<&mut dyn WritableDataResource> {
-        self.write_resource_instances.get_mut(id).map(|r| r.as_mut())
+        self.write_resource_instances.get_mut(id).map(|r| r.as_mut() as &mut dyn WritableDataResource)
     }
 
     /// Returns the data resource instance for the given id.
     pub fn get_data_resource(&self, id: &str) -> Option<&dyn DataResource> {
-        self.data_resource_instances.get(id).map(|r| r.as_ref())
+        self.data_resource_instances.get(id).map(|r| r.as_ref() as &dyn DataResource)
     }
 
     /// Returns the operation instance for the given id.
     pub fn get_operation(&self, id: &str) -> Option<&dyn Operation> {
-        self.operation_instances.get(id).map(|r| r.as_ref())
+        self.operation_instances.get(id).map(|r| r.as_ref() as &dyn Operation)
     }
 
     /// Returns a mutable reference to the operation instance for the given id.
     pub fn get_operation_mut(&mut self, id: &str) -> Option<&mut dyn Operation> {
-        self.operation_instances.get_mut(id).map(|r| r.as_mut())
+        self.operation_instances.get_mut(id).map(|r| r.as_mut() as &mut dyn Operation)
     }
 }
 
@@ -417,27 +417,27 @@ pub struct UdsServicesCollection {
 impl UdsServicesCollection {
     /// Returns the combined read+write DID instance for the given id.
     pub fn get_data_id(&self, id: &str) -> Option<&dyn DataIdentifier> {
-        self.data_ids.get(id).map(|r| r.as_ref())
+        self.data_ids.get(id).map(|r| r.as_ref() as &dyn DataIdentifier)
     }
 
     /// Returns the read DID instance for the given id.
     pub fn get_read_did(&self, id: &str) -> Option<&dyn ReadDataByIdentifier> {
-        self.read_dids.get(id).map(|r| r.as_ref())
+        self.read_dids.get(id).map(|r| r.as_ref() as &dyn ReadDataByIdentifier)
     }
 
     /// Returns a mutable reference to the write DID instance for the given id.
     pub fn get_write_did_mut(&mut self, id: &str) -> Option<&mut dyn WriteDataByIdentifier> {
-        self.write_dids.get_mut(id).map(|r| r.as_mut())
+        self.write_dids.get_mut(id).map(|r| r.as_mut() as &mut dyn WriteDataByIdentifier)
     }
 
     /// Returns the routine instance for the given id.
     pub fn get_routine(&self, id: &str) -> Option<&dyn RoutineControl> {
-        self.routines.get(id).map(|r| r.as_ref())
+        self.routines.get(id).map(|r| r.as_ref() as &dyn RoutineControl)
     }
 
     /// Returns a mutable reference to the routine instance for the given id.
     pub fn get_routine_mut(&mut self, id: &str) -> Option<&mut dyn RoutineControl> {
-        self.routines.get_mut(id).map(|r| r.as_mut())
+        self.routines.get_mut(id).map(|r| r.as_mut() as &mut dyn RoutineControl)
     }
 
     // ------------------------------------------------------------------
