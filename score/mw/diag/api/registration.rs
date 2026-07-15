@@ -285,7 +285,7 @@ impl Drop for RegistrationHandle {
 /// Binding layer between user-built service collections and the runtime.
 /// User code obtains a [`ServiceRegistrar`] from the runtime and passes collections to it.
 /// The runtime implements this trait internally; user code never touches the runtime directly.
-/// 
+///
 /// Both registration methods return a [`RegistrationHandle`].  The application
 /// must store the handle — dropping it automatically deregisters all associated
 /// services.
