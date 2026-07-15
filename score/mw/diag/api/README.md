@@ -120,7 +120,7 @@ impl DataResource for BuildInfoResource {
         ReadValueHandle::from_closure(move || Ok(ReadValueReply {
             data: ReplyMessagePayload::from_string(version),
             errors: None,
-        })
+        }))
     }
 }
 ```
