@@ -20,7 +20,7 @@ use diag_api::*;
 use diag_runtime::*;
 
 use futures::StreamExt;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Notify};
 
 /*************************************/
@@ -225,6 +225,7 @@ impl sovd::DiagnosticEntity for VehicleEntity {
 }
 
 /// Read-only data resource for vehicle identification
+#[derive(Clone)]
 struct VehicleIdentificationResource {
     vin: String,
     make: String,
@@ -246,9 +247,8 @@ impl ReadOnlyDataResource for VehicleIdentificationResource {
 }
 
 /// Read-write data resource for vehicle diagnostic state
-struct VehicleDiagnosticStateResource {
-    state: Arc<Mutex<String>>,
-}
+#[derive(Clone)]
+struct VehicleDiagnosticStateResource { state: Arc<Mutex<String>> }
 
 impl DataResource for VehicleDiagnosticStateResource {
     fn read(&self, _input: ReadValueArgs) -> ReadValueHandle {
@@ -263,13 +263,14 @@ impl DataResource for VehicleDiagnosticStateResource {
 }
 
 /// Simple synchronous operation for vehicle diagnostics
+#[derive(Clone)]
 struct VehicleDiagnosticOperation;
 
 impl Operation for VehicleDiagnosticOperation {
     fn execute(
         &mut self,
         _input: ExecuteArguments,
-        _control: ExecutionControl,
+        _control: Box<dyn ExecutionControl>,
     ) -> DiagResult<ExecutionHandle> {
         Ok(ExecutionHandle::from_closure(|| {
             ExecutionResult::Ok(DiagnosticReply {
@@ -289,6 +290,8 @@ impl Operation for VehicleDiagnosticOperation {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use diag_api::sovd::data_resource::DataCategory;
+    use diag_api::JsonSchema;
 
     const ENTITY_ID: &str = "test_entity";
     const SYNC_OP_ID: &str = "my_sync_op";
@@ -322,7 +325,7 @@ mod tests {
                     category: DataCategory::IdentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_data_resource(
                 VehicleDiagnosticStateResource {
@@ -336,11 +339,11 @@ mod tests {
                     category: DataCategory::CurrentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_operation(
-                "diagnostics_op",
                 VehicleDiagnosticOperation,
+                "diagnostics_op",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
@@ -380,7 +383,7 @@ mod tests {
                     category: DataCategory::IdentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_data_resource(
                 VehicleDiagnosticStateResource {
@@ -394,11 +397,11 @@ mod tests {
                     category: DataCategory::CurrentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_operation(
-                "diagnostics_op",
                 VehicleDiagnosticOperation,
+                "diagnostics_op",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
@@ -435,7 +438,7 @@ mod tests {
                     category: DataCategory::IdentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_read_resource(
                 VehicleIdentificationResource {
@@ -451,7 +454,7 @@ mod tests {
                     category: DataCategory::IdentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_data_resource(
                 VehicleDiagnosticStateResource {
@@ -465,11 +468,11 @@ mod tests {
                     category: DataCategory::CurrentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_operation(
-                "op_sync",
                 VehicleDiagnosticOperation,
+                "op_sync",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
@@ -478,8 +481,8 @@ mod tests {
                 },
             )
             .with_operation(
-                "op_diagnostic",
                 VehicleDiagnosticOperation,
+                "op_diagnostic",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
@@ -515,7 +518,7 @@ mod tests {
                     category: DataCategory::IdentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_data_resource(
                 VehicleDiagnosticStateResource {
@@ -529,11 +532,11 @@ mod tests {
                     category: DataCategory::CurrentData,
                     groups: None,
                 },
-                serde_json::Value::Null,
+                JsonSchema::Null,
             )
             .with_operation(
-                "op_verify",
                 VehicleDiagnosticOperation,
+                "op_verify",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
@@ -560,7 +563,7 @@ mod tests {
     /// Test 4: UDS builder without entity - DIDs and routines only
     #[test]
     fn test_uds_builder_without_entity() {
-        let collection = uds::UdsServicesCollectionBuilder::new()
+        let collection = UdsServicesCollectionBuilder::new()
             .with_read_did("F190", MyReadDataByIdentifier {})
             .with_routine("0301", MyUdsRoutine { completion: Arc::new(Notify::new()) })
             .build()
@@ -575,7 +578,7 @@ mod tests {
     /// Test 5: UDS builder fluent API with multiple DIDs and routines
     #[test]
     fn test_uds_builder_fluent_api_multiple_services() {
-        let collection = uds::UdsServicesCollectionBuilder::new()
+        let collection = UdsServicesCollectionBuilder::new()
             .with_read_did("F186", MyReadDataByIdentifier {})
             .with_read_did("F190", MyReadDataByIdentifier {})
             .with_read_did("F1A0", MyReadDataByIdentifier {})

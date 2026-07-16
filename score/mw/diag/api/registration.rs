@@ -25,7 +25,7 @@ use ::uds::{DataIdentifier, ReadDataByIdentifier, RoutineControl, WriteDataByIde
 // ============================================================================
 
 /// Trait that diagnostic entities must implement to be registered with SOVD services
-pub trait DiagnosticEntity {
+pub trait DiagnosticEntity: Send + Sync {
     /// Returns a unique identifier for this diagnostic entity
     fn entity_id(&self) -> &str;
 }
@@ -47,7 +47,7 @@ pub struct DiagnosticServicesCollectionBuilder<'entity> {
     operation_metadata:      IndexMap<String, OperationMetadata>,
 
     read_resource_instances:  IndexMap<String, Box<dyn ReadOnlyDataResource  + Send + Sync + 'static>>,
-    write_resource_instances: IndexMap<String, Box<dyn WritableDataResource  + Send + 'static>>,
+    write_resource_instances: IndexMap<String, Box<dyn WritableDataResource  + Send + Sync + 'static>>,
     data_resource_instances:  IndexMap<String, Box<dyn DataResource          + Send + Sync + 'static>>,
     operation_instances:      IndexMap<String, Box<dyn Operation             + Send + Sync + 'static>>,
 }
@@ -82,7 +82,7 @@ impl<'entity> DiagnosticServicesCollectionBuilder<'entity> {
     }
 
     /// Registers a write-only data resource.  The resource ID is taken from `metadata.id`.
-    pub fn with_write_resource<T: WritableDataResource + Send + 'static>(
+    pub fn with_write_resource<T: WritableDataResource + Send + Sync + 'static>(
         mut self,
         resource: T,
         metadata: DataResourceMetadata,
@@ -112,8 +112,8 @@ impl<'entity> DiagnosticServicesCollectionBuilder<'entity> {
     /// `id` identifies the operation; `metadata` carries its runtime-visible attributes.
     pub fn with_operation<T: Operation + Send + Sync + 'static>(
         mut self,
-        id: impl Into<String>,
         operation: T,
+        id: impl Into<String>,
         metadata: OperationMetadata,
     ) -> Self {
         let id = id.into();
@@ -145,8 +145,9 @@ impl<'entity> DiagnosticServicesCollectionBuilder<'entity> {
             .chain(self.data_resource_metadata.keys())
             .chain(self.operation_metadata.keys())
             .collect();
-        let unique: std::collections::HashSet<_> = all_ids.iter().collect();
-        if unique.len() != all_ids.len() {
+        let all_ids_len = all_ids.len();
+        let unique: IndexSet<_> = all_ids.into_iter().collect();
+        if unique.len() != all_ids_len {
             return Err(Error::from_error(::common::sovd::GenericError::from_code(
                 ::common::sovd::ErrorCode::SovdServerMisconfigured,
                 "Duplicate service ID detected".to_string(),
@@ -183,7 +184,7 @@ pub struct DiagnosticServicesCollection<'entity> {
 
     // Private instance maps — accessed only through per-item getters
     read_resource_instances:  IndexMap<String, Box<dyn ReadOnlyDataResource  + Send + Sync + 'static>>,
-    write_resource_instances: IndexMap<String, Box<dyn WritableDataResource  + Send + 'static>>,
+    write_resource_instances: IndexMap<String, Box<dyn WritableDataResource  + Send + Sync + 'static>>,
     data_resource_instances:  IndexMap<String, Box<dyn DataResource          + Send + Sync + 'static>>,
     operation_instances:      IndexMap<String, Box<dyn Operation             + Send + Sync + 'static>>,
 }
@@ -212,6 +213,24 @@ impl<'entity> DiagnosticServicesCollection<'entity> {
     /// Returns all registered operations
     pub fn operations(&self) -> &IndexMap<String, OperationMetadata> {
         &self.operation_metadata
+    }
+
+    /// Consuming extractors to pass real instance ownership to the registrar layer 
+
+    pub fn into_read_resources(self) -> IndexMap<String, Box<dyn ReadOnlyDataResource + Send + Sync + 'static>> {
+        self.read_resource_instances
+    }
+
+    pub fn into_write_resources(self) -> IndexMap<String, Box<dyn WritableDataResource + Send + Sync + 'static>> {
+        self.write_resource_instances
+    }
+
+    pub fn into_data_resources(self) -> IndexMap<String, Box<dyn DataResource + Send + Sync + 'static>> {
+        self.data_resource_instances
+    }
+
+    pub fn into_operations(self) -> IndexMap<String, Box<dyn Operation + Send + Sync + 'static>> {
+        self.operation_instances
     }
 
     // ------------------------------------------------------------------
@@ -258,6 +277,7 @@ impl<'entity> DiagnosticServicesCollection<'entity> {
 ///
 /// Both [`ServiceRegistrar::register_sovd_services`] and
 /// [`ServiceRegistrar::register_uds_services`] return this same type.
+#[must_use = "dropping this handle immediately deregisters all associated services"]
 pub struct RegistrationHandle {
     deregister: Option<Box<dyn FnOnce() + Send>>,
 }
@@ -265,6 +285,7 @@ pub struct RegistrationHandle {
 impl RegistrationHandle {
     /// Creates a new handle with a deregistration callback.
     /// Called by the runtime implementation — not by application code.
+    #[must_use = "dropping this handle immediately deregisters all associated services"]
     pub fn new(deregister: impl FnOnce() + Send + 'static) -> Self {
         Self { deregister: Some(Box::new(deregister)) }
     }
@@ -309,10 +330,10 @@ pub trait ServiceRegistrar {
 /// Entity-agnostic builder for UDS diagnostic services (DIDs and routines)
 #[derive(Default)]
 pub struct UdsServicesCollectionBuilder {
-    data_ids:   IndexMap<String, Box<dyn DataIdentifier           + Send + 'static>>,
-    read_dids:  IndexMap<String, Box<dyn ReadDataByIdentifier     + Send + 'static>>,
-    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier    + Send + 'static>>,
-    routines:   IndexMap<String, Box<dyn RoutineControl           + Send + 'static>>,
+    data_ids:   IndexMap<String, Box<dyn DataIdentifier           + Send + Sync + 'static>>,
+    read_dids:  IndexMap<String, Box<dyn ReadDataByIdentifier     + Send + Sync + 'static>>,
+    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier    + Send + Sync + 'static>>,
+    routines:   IndexMap<String, Box<dyn RoutineControl           + Send + Sync + 'static>>,
 }
 
 impl UdsServicesCollectionBuilder {
@@ -322,41 +343,25 @@ impl UdsServicesCollectionBuilder {
     }
 
     /// Registers a combined read+write Data Identifier.
-    pub fn with_data_id<T: DataIdentifier + Send + 'static>(
-        mut self,
-        id: impl Into<String>,
-        service: T,
-    ) -> Self {
+    pub fn with_data_id<T: DataIdentifier + Send + Sync + 'static>(mut self, id: impl Into<String>, service: T) -> Self {
         self.data_ids.insert(id.into(), Box::new(service));
         self
     }
 
     /// Registers a read Data Identifier (DID)
-    pub fn with_read_did<T: ReadDataByIdentifier + Send + 'static>(
-        mut self,
-        id: impl Into<String>,
-        service: T,
-    ) -> Self {
+    pub fn with_read_did<T: ReadDataByIdentifier + Send + Sync + 'static>(mut self, id: impl Into<String>, service: T) -> Self {
         self.read_dids.insert(id.into(), Box::new(service));
         self
     }
 
     /// Registers a write Data Identifier (DID)
-    pub fn with_write_did<T: WriteDataByIdentifier + Send + 'static>(
-        mut self,
-        id: impl Into<String>,
-        service: T,
-    ) -> Self {
+    pub fn with_write_did<T: WriteDataByIdentifier + Send + Sync + 'static>(mut self, id: impl Into<String>, service: T) -> Self {
         self.write_dids.insert(id.into(), Box::new(service));
         self
     }
 
     /// Registers a routine control handler
-    pub fn with_routine<T: RoutineControl + Send + 'static>(
-        mut self,
-        id: impl Into<String>,
-        routine: T,
-    ) -> Self {
+    pub fn with_routine<T: RoutineControl + Send + Sync + 'static>(mut self, id: impl Into<String>, routine: T) -> Self {
         self.routines.insert(id.into(), Box::new(routine));
         self
     }
@@ -388,8 +393,9 @@ impl UdsServicesCollectionBuilder {
             .chain(self.write_dids.keys())
             .chain(self.routines.keys())
             .collect();
-        let unique: std::collections::HashSet<_> = all_ids.iter().collect();
-        if unique.len() != all_ids.len() {
+        let all_ids_len = all_ids.len();
+        let unique: IndexSet<_> = all_ids.into_iter().collect();
+        if unique.len() != all_ids_len {
             return Err(Error::from_error(::common::sovd::GenericError::from_code(
                 ::common::sovd::ErrorCode::SovdServerMisconfigured,
                 "Duplicate service ID detected".to_string(),
@@ -408,13 +414,31 @@ pub struct UdsServicesCollection {
     routine_keys:   IndexSet<String>,
 
     // Instance maps — accessed only through per-item getters
-    data_ids:   IndexMap<String, Box<dyn DataIdentifier           + Send + 'static>>,
-    read_dids:  IndexMap<String, Box<dyn ReadDataByIdentifier     + Send + 'static>>,
-    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier    + Send + 'static>>,
-    routines:   IndexMap<String, Box<dyn RoutineControl           + Send + 'static>>,
+    data_ids:   IndexMap<String, Box<dyn DataIdentifier           + Send + Sync + 'static>>,
+    read_dids:  IndexMap<String, Box<dyn ReadDataByIdentifier     + Send + Sync + 'static>>,
+    write_dids: IndexMap<String, Box<dyn WriteDataByIdentifier    + Send + Sync + 'static>>,
+    routines:   IndexMap<String, Box<dyn RoutineControl           + Send + Sync + 'static>>,
 }
 
 impl UdsServicesCollection {
+    /// Consuming extractors to pass real instance ownership to the registrar layer
+
+    pub fn into_data_ids(self) -> IndexMap<String, Box<dyn DataIdentifier + Send + Sync + 'static>> {
+        self.data_ids
+    }
+
+    pub fn into_read_dids(self) -> IndexMap<String, Box<dyn ReadDataByIdentifier + Send + Sync + 'static>> {
+        self.read_dids
+    }
+
+    pub fn into_write_dids(self) -> IndexMap<String, Box<dyn WriteDataByIdentifier + Send + Sync + 'static>> {
+        self.write_dids
+    }
+
+    pub fn into_routines(self) -> IndexMap<String, Box<dyn RoutineControl + Send + Sync + 'static>> {
+        self.routines
+    }
+
     /// Returns the combined read+write DID instance for the given id.
     pub fn get_data_id(&self, id: &str) -> Option<&dyn DataIdentifier> {
         self.data_ids.get(id).map(|r| r.as_ref() as &dyn DataIdentifier)
@@ -495,6 +519,22 @@ mod tests {
         }
     }
 
+    struct StubWritableDataResource;
+    impl ::data_resource::WritableDataResource for StubWritableDataResource {
+        fn write(&mut self, _: WriteValueArgs) -> WriteValueHandle {
+            WriteValueHandle::ready(Ok(()))
+        }
+    }
+
+    struct StubDataId;
+    impl ::uds::ReadDataByIdentifier for StubDataId {
+        fn read(&self) -> ::common::Result<Vec<u8>> { Ok(vec![0x00]) }
+    }
+    impl ::uds::WriteDataByIdentifier for StubDataId {
+        fn write(&mut self, _: &[u8]) -> ::common::Result<()> { Ok(()) }
+    }
+    impl ::uds::DataIdentifier for StubDataId {}
+
     struct StubRdbi;
     impl ::uds::ReadDataByIdentifier for StubRdbi {
         fn read(&self) -> ::common::Result<Vec<u8>> { Ok(vec![]) }
@@ -548,7 +588,7 @@ mod tests {
         let c = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e2".into() })
             .with_read_resource(StubReadResource, stub_metadata("r1"), ::common::JsonSchema::Null)
             .with_data_resource(StubDataResource, stub_metadata("d1"), ::common::JsonSchema::Null)
-            .with_operation("op1", StubOperation, stub_op_metadata())
+            .with_operation(StubOperation, "op1", stub_op_metadata())
             .build().expect("build must succeed");
 
         assert_eq!(c.read_resources().len(), 1);
@@ -567,6 +607,35 @@ mod tests {
         let result = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e3".into() })
             .with_read_resource(StubReadResource, stub_metadata("dup"), ::common::JsonSchema::Null)
             .with_data_resource(StubDataResource, stub_metadata("dup"), ::common::JsonSchema::Null)
+            .build();
+        assert!(result.is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // SOVD: write resource appears in write_resources() and get_write_resource_mut()
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_sovd_build_with_write_resource() {
+        let mut c = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e4".into() })
+            .with_write_resource(StubWritableDataResource, stub_metadata("w1"), ::common::JsonSchema::Null)
+            .build().expect("build with write resource must succeed");
+
+        assert_eq!(c.write_resources().len(), 1);
+        assert!(c.write_resources().contains_key("w1"));
+        let (meta, _schema) = &c.write_resources()["w1"];
+        assert_eq!(meta.id, "w1");
+        assert!(c.get_write_resource_mut("w1").is_some());
+        assert!(c.get_write_resource_mut("missing").is_none());
+    }
+
+    // -----------------------------------------------------------------------
+    // SOVD: duplicate ID between write resource and read resource is rejected
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_sovd_write_resource_duplicate_id_rejected() {
+        let result = DiagnosticServicesCollectionBuilder::new(TestEntity { id: "e5".into() })
+            .with_read_resource(StubReadResource, stub_metadata("shared"), ::common::JsonSchema::Null)
+            .with_write_resource(StubWritableDataResource, stub_metadata("shared"), ::common::JsonSchema::Null)
             .build();
         assert!(result.is_err());
     }
@@ -595,6 +664,21 @@ mod tests {
         assert!(c.read_dids().contains("F190") && c.write_dids().contains("F191")
             && c.routines().contains("0301"));
         assert!(c.get_read_did("F190").is_some() && c.get_routine("0301").is_some());
+    }
+
+    // -----------------------------------------------------------------------
+    // UDS: combined read+write DID registered via with_data_id
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_uds_build_with_data_id() {
+        let c = UdsServicesCollectionBuilder::new()
+            .with_data_id("F1A0", StubDataId)
+            .build().expect("UDS build with data_id must succeed");
+
+        assert_eq!(c.data_ids().len(), 1);
+        assert!(c.data_ids().contains("F1A0"));
+        assert!(c.get_data_id("F1A0").is_some());
+        assert!(c.get_data_id("missing").is_none());
     }
 
     // -----------------------------------------------------------------------

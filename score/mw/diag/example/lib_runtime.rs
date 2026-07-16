@@ -42,9 +42,7 @@ pub type ExecutionTimeout = Duration;
 static EXECUTION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn issue_new_execution_id() -> ExecutionId {
-    EXECUTION_ID_COUNTER
-        .fetch_add(1, Ordering::Relaxed)
-        .to_string()
+    EXECUTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed).to_string()
 }
 
 // this message type is for demonstration purposes only
@@ -88,27 +86,19 @@ struct ExecutionControlImpl {
 
 impl ExecutionControlImpl {
     fn new(exec_events: mpsc::Receiver<ExecutionEvent>, exec_id: ExecutionId) -> Self {
-        Self {
-            exec_events,
-            exec_id,
-        }
+        Self { exec_events, exec_id }
     }
 }
 
 impl futures::Stream for ExecutionControlImpl {
     type Item = ExecutionEvent;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
         self.get_mut().exec_events.poll_recv(cx)
     }
 }
 
 impl ExecutionControl for ExecutionControlImpl {
-    fn exec_id(&self) -> &ExecutionId {
-        &self.exec_id
-    }
+    fn exec_id(&self) -> &ExecutionId { &self.exec_id }
 }
 
 /**********************/
@@ -125,11 +115,7 @@ enum ActiveExecution {
 
 impl ActiveExecution {
     fn try_resolve(&mut self) {
-        if let ActiveExecution::Running {
-            join_handle: Some(handle),
-            ..
-        } = self
-        {
+        if let ActiveExecution::Running { join_handle: Some(handle), .. } = self {
             if handle.is_finished() {
                 let old = std::mem::replace(
                     self,
@@ -188,16 +174,11 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(RuntimeImpl::new())),
-        }
+        Self { inner: Arc::new(Mutex::new(RuntimeImpl::new())) }
     }
 
     pub fn get_or_create_entity(&self, id: EntityId) -> Arc<Entity> {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .get_or_create_entity(id)
+        self.inner.lock().expect("mutex acquisition failed").get_or_create_entity(id)
     }
 
     pub fn run(&self) -> impl Future<Output = ()> {
@@ -206,25 +187,16 @@ impl Runtime {
 
     // This method is for demonstration purposes only!
     pub fn send(&self, message: SOVDMessage) -> impl Future<Output = SOVDReply> {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .send(message)
+        self.inner.lock().expect("mutex acquisition failed").send(message)
     }
 
     pub fn shutdown(&self) -> impl Future<Output = ()> {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .shutdown()
+        self.inner.lock().expect("mutex acquisition failed").shutdown()
     }
 
     /// Removes a previously registered entity from the runtime (deregistration / cleanup).
     pub fn remove_entity(&self, id: &EntityId) -> bool {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .remove_entity(id)
+        self.inner.lock().expect("mutex acquisition failed").remove_entity(id)
     }
 }
 
@@ -238,8 +210,7 @@ struct RuntimeImpl {
 
 impl RuntimeImpl {
     pub fn new() -> Self {
-        let (sovd_sender, sovd_receiver) =
-            mpsc::channel::<(SOVDMessage, oneshot::Sender<SOVDReply>)>(10);
+        let (sovd_sender, sovd_receiver) = mpsc::channel::<(SOVDMessage, oneshot::Sender<SOVDReply>)>(10);
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         RuntimeImpl {
             entities: Arc::new(Mutex::new(IndexMap::<EntityId, Arc<Entity>>::new())),
@@ -345,8 +316,7 @@ impl RuntimeImpl {
                 });
                 let reply = match exec_control {
                     Ok(exec_control) => {
-                        let event =
-                            ExecutionEvent::new(ExecutionEventKind::HandleCustomCapability(value));
+                        let event = ExecutionEvent::new(ExecutionEventKind::HandleCustomCapability(value));
                         exec_control.send(event).await.map_err(|_| {
                             DiagError::from_error(sovd::GenericError::from_code(
                                 sovd::ErrorCode::ErrorResponse,
@@ -470,7 +440,7 @@ impl RuntimeImpl {
         self.entities
             .lock()
             .expect("mutex acquisition failed")
-            .shift_remove(id)
+            .swap_remove(id)
             .is_some()
     }
 
@@ -497,7 +467,7 @@ impl Entity {
         Self {
             data_resources: Mutex::new(IndexMap::<DataResourceId, DataResourceHolder>::new()),
             operations: Mutex::new(IndexMap::<OperationId, OperationHolder>::new()),
-            id: id,
+            id,
         }
     }
 
@@ -853,6 +823,7 @@ mod tests {
     use diag_api::sovd::operation::ExecutionHandle;
     use diag_api::JsonSchema;
 
+    #[derive(Clone)]
     struct ReadOnlyResource;
 
     impl DataResource for ReadOnlyResource {
@@ -864,13 +835,14 @@ mod tests {
         }
     }
 
+    #[derive(Clone)]
     struct NoOpOperation;
 
     impl Operation for NoOpOperation {
         fn execute(
             &mut self,
             _input: ExecuteArguments,
-            _control: ExecutionControl,
+            _control: Box<dyn ExecutionControl>,
         ) -> DiagResult<ExecutionHandle> {
             Ok(ExecutionHandle::from_closure(|| Ok(DiagnosticReply::default())))
         }
@@ -1000,8 +972,8 @@ mod tests {
                 JsonSchema::Null,
             )
             .with_operation(
-                "validate_vin",
                 NoOpOperation,
+                "validate_vin",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
@@ -1010,8 +982,8 @@ mod tests {
                 },
             )
             .with_operation(
-                "run_diagnostics",
                 NoOpOperation,
+                "run_diagnostics",
                 OperationMetadata {
                     proximity_proof_required: false,
                     synchronous_execution: true,
