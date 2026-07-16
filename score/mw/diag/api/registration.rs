@@ -215,7 +215,7 @@ impl<'entity> DiagnosticServicesCollection<'entity> {
         &self.operation_metadata
     }
 
-    /// Consuming extractors to pass real instance ownership to the registrar layer 
+    /// Consuming extractors to pass real instance ownership to the registrar layer
 
     pub fn into_read_resources(self) -> IndexMap<String, Box<dyn ReadOnlyDataResource + Send + Sync + 'static>> {
         self.read_resource_instances

@@ -13,9 +13,13 @@
 
 use diag_api::sovd::data_resource::*;
 use diag_api::sovd::operation::*;
+use diag_api::sovd::registration::*;
+use diag_api::uds::UdsServicesCollectionBuilder;
 use diag_api::uds::{ReadDataByIdentifier, RoutineControl, RoutineControlAdapter, StartRoutine};
 use diag_api::Result as DiagResult;
 use diag_api::*;
+
+use diag_api::sovd;
 
 use diag_runtime::*;
 
@@ -204,21 +208,21 @@ impl Operation for MyAsyncOperation {
 /// Example implementation of a vehicle entity for diagnostic services registration
 struct VehicleEntity {
     vin: String,
-    make: String,
-    model: String,
+    _make: String,
+    _model: String,
 }
 
 impl VehicleEntity {
     fn new(vin: &str, make: &str, model: &str) -> Self {
         Self {
             vin: vin.to_string(),
-            make: make.to_string(),
-            model: model.to_string(),
+            _make: make.to_string(),
+            _model: model.to_string(),
         }
     }
 }
 
-impl sovd::DiagnosticEntity for VehicleEntity {
+impl DiagnosticEntity for VehicleEntity {
     fn entity_id(&self) -> &str {
         &self.vin
     }

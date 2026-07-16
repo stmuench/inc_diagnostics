@@ -24,9 +24,9 @@ pub type Error = ::common::Error;
 
 pub mod uds {
     pub use common::uds::*;
+    pub use registration::*;
     pub use uds::*;
     pub use uds_adapters::*;
-    pub use registration::*;
 }
 
 pub mod sovd {
@@ -38,10 +38,7 @@ pub mod sovd {
         pub use data_resource::sovd::*;
         pub use data_resource::*;
     }
-
-    pub use operation::Operation; // for users' convenience
-    pub use operation::SimpleOperation; // for users' convenience
-
+    pub use operation::{Operation, SimpleOperation}; // for users' convenience
     pub mod operation {
         pub use operation::*;
         pub use simple_operation::*;
