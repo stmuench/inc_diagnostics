@@ -13,6 +13,7 @@
 
 use diag_api::sovd::data_resource::*;
 use diag_api::sovd::operation::*;
+use diag_api::sovd::DataError;
 use diag_api::uds::{
     ReadDataByIdentifier, RoutineControl, RoutineControlAdapter, RoutineHandler,
     SerializedReadDataByIdentifier, SerializedRoutineControl, SerializedWriteDataByIdentifier,
@@ -20,7 +21,6 @@ use diag_api::uds::{
 };
 use diag_api::Result as DiagResult;
 use diag_api::*;
-use serde::{Deserialize, Serialize};
 
 use diag_runtime::*;
 
@@ -81,7 +81,7 @@ impl WriteHandler<VehicleSpeed> for SpeedWriteHandler {
 /********************************************************/
 
 /// SOVD JSON data resource serialized via `serde_json` on read/write.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 struct EngineStatus {
     running: bool,
     temperature_celsius: i32,
@@ -97,23 +97,20 @@ impl DataResource for SovdEngineStatusResource {
             return ReadValueHandle::from_error(diag_api::Error::from_error(
                 diag_api::sovd::GenericError::from_code(
                     diag_api::sovd::ErrorCode::PreconditionNotFulfilled,
-                    "This SOVD data resource only supports JSON encoding for its reply data!"
-                        .to_string(),
+                    "This SOVD data resource only supports JSON encoding for its reply data!".to_string(),
                 ),
             ));
         }
-        match serde_json::to_value(&self.status) {
-            Ok(json) => ReadValueHandle::ready(ReadValueReply {
-                data: ReplyMessagePayload::from_json(json, None),
-                errors: None,
-            }),
-            Err(e) => ReadValueHandle::from_error(diag_api::Error::from_error(
-                diag_api::sovd::GenericError::from_code(
-                    diag_api::sovd::ErrorCode::SovdServerFailure,
-                    e.to_string(),
-                ),
-            )),
-        }
+
+        let mapped_json = serde_json::json!({
+            "running": self.status.running,
+            "temperature_celsius": self.status.temperature_celsius
+        });
+
+        ReadValueHandle::ready(ReadValueReply {
+            data: ReplyMessagePayload::from_json(mapped_json, None),
+            errors: None,
+        })
     }
 
     fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
@@ -125,15 +122,26 @@ impl DataResource for SovdEngineStatusResource {
                 ),
             ));
         };
-        match serde_json::from_value::<EngineStatus>(json) {
-            Ok(new_status) => { self.status = new_status; WriteValueHandle::ready() }
-            Err(e) => WriteValueHandle::from_error(DataError::from_error(
-                diag_api::sovd::GenericError::from_code(
-                    diag_api::sovd::ErrorCode::InvalidResponseContent,
-                    e.to_string(),
-                ),
-            )),
+
+        if let Some(obj) = json.as_object() {
+            let running = obj.get("running").and_then(|v| v.as_bool());
+            let temp = obj.get("temperature_celsius").and_then(|v| v.as_i64());
+
+            if let (Some(r), Some(t)) = (running, temp) {
+                self.status = EngineStatus {
+                    running: r,
+                    temperature_celsius: t as i32,
+                };
+                return WriteValueHandle::ready();
+            }
         }
+
+        WriteValueHandle::from_error(DataError::from_error(
+            diag_api::sovd::GenericError::from_code(
+                diag_api::sovd::ErrorCode::InvalidResponseContent,
+                "Failed to deserialize EngineStatus from JSON object layout details".to_string(),
+            ),
+        ))
     }
 }
 
@@ -402,9 +410,7 @@ mod tests {
         // forwarding to SpeedWriteHandler.
         entity.register_data_resource(
             diag_api::uds::DataResourceAdapter::new()
-                .with_wdbi(SerializedWriteDataByIdentifier::<VehicleSpeed, _>::new(
-                    SpeedWriteHandler,
-                )),
+                .with_wdbi(SerializedWriteDataByIdentifier::new(SpeedWriteHandler)),
             SERIALIZED_WDBI_ID.to_string(),
             DataResourceMetadata {
                 id: SERIALIZED_WDBI_ID.to_string(),
@@ -420,7 +426,7 @@ mod tests {
         // → serializes typed reply back to binary. Full bidirectional UDS binary serialization.
         entity.register_operation(
             SimpleOperationAdapter::new(RoutineControlAdapter::new(
-                SerializedRoutineControl::<VehicleSpeed, _>::new(EchoSpeedRoutineHandler),
+                SerializedRoutineControl::new(EchoSpeedRoutineHandler),
             )),
             SERIALIZED_ROUTINE_OP_ID.to_string(),
             OperationMetadata {
@@ -858,7 +864,7 @@ mod tests {
 
     //
     // trigger execution of an operation which got implemented via the `uds::RoutineControl`
-    // API, then stop it and check the execution result
+    // API, attempt to stop it and request its results
     //
     #[tokio::test]
     async fn test_execution_and_query_of_uds_routine() {
@@ -984,7 +990,7 @@ mod tests {
         // --- SerializedWriteDataByIdentifier: raw bytes decoded to VehicleSpeed, handler called ---
         // [0x00, 0x64] decodes to VehicleSpeed { value: 100 } and reaches the handler
         let mut wdbi = diag_api::uds::DataResourceAdapter::new()
-            .with_wdbi(SerializedWriteDataByIdentifier::<VehicleSpeed, _>::new(SpeedWriteHandler));
+            .with_wdbi(SerializedWriteDataByIdentifier::new(SpeedWriteHandler));
         match wdbi.write(WriteValueArgs {
             user_data_signature: None,
             user_data: Some(RequestMessagePayload::Binary(vec![0x00, 0x64])),
@@ -1044,7 +1050,7 @@ mod tests {
         }
 
         // Invalid JSON shape must be rejected.
-        match resource.write(WriteValueArgs {
+        let _ = match resource.write(WriteValueArgs {
             user_data_signature: None,
             user_data: Some(RequestMessagePayload::JSON(serde_json::json!({ "unknown": 0 }))),
             additional_attrs: None,
@@ -1054,7 +1060,7 @@ mod tests {
         };
 
         // Non-JSON encoding must be rejected — this data resource is JSON-only.
-        match SovdEngineStatusResource { status: EngineStatus { running: true, temperature_celsius: 90 } }
+        match (SovdEngineStatusResource { status: EngineStatus { running: true, temperature_celsius: 90 } })
             .read(ReadValueArgs::new(ReplyMessageEncoding::Binary))
         {
             ReadValueHandle::Ready(Err(err)) => match err.code {
@@ -1071,7 +1077,7 @@ mod tests {
     // SerializedRoutineControl: binary → deserialize → handler → serialize → binary (bidirectional).
     #[test]
     fn test_serialized_routine_control_bidirectional() {
-        let mut routine = SerializedRoutineControl::<VehicleSpeed, _>::new(EchoSpeedRoutineHandler);
+        let mut routine = SerializedRoutineControl::new(EchoSpeedRoutineHandler);
 
         // [0x00, 0x96] = VehicleSpeed { value: 150 } — echoed back as serialized reply
         let start = routine.start(Some(&[0x00, 0x96])).expect("start must succeed");
@@ -1081,11 +1087,16 @@ mod tests {
         assert_eq!(routine.stop(Some(&[0x00, 0x64])).expect("stop must succeed"), Some(vec![0x00, 0x64]));
 
         // Too-short input must be rejected.
-        assert_eq!(
-            routine.start(Some(&[0x01])).unwrap_err().code,
-            diag_api::ErrorCode::UDS(
-                diag_api::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat
-            )
-        );
+        match routine.start(Some(&[0x01])) {
+            Err(err) => {
+                assert_eq!(
+                    err.code,
+                    diag_api::ErrorCode::UDS(
+                        diag_api::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat
+                    )
+                );
+            }
+            Ok(_) => panic!("Expected message size formatting error pattern, but got Ok response"),
+        }
     }
 }

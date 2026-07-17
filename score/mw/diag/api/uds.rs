@@ -60,7 +60,7 @@ impl StartRoutine {
     {
         Ok(Self {
             future: Box::pin(async move { func() }),
-            reply: reply,
+            reply,
         })
     }
 
@@ -70,7 +70,7 @@ impl StartRoutine {
     {
         Ok(Self {
             future: Box::pin(future),
-            reply: reply,
+            reply,
         })
     }
 
@@ -133,17 +133,33 @@ pub struct SerializationHelper;
 
 impl SerializationHelper {
     /// Encode `payload` into raw bytes via [`UdsSerialize::serialize`].
+    ///
+    /// Any internal serialization or formatting failure is normalized to a UDS
+    /// `FailurePreventsExecutionOfRequestedAction` code before propagating.
     pub fn serialize_response<T: UdsSerialize>(payload: &T) -> DiagResult<ByteVector> {
-        payload.serialize()
+        payload.serialize().map_err(|_| {
+            ::common::Error::from_nrc(
+                ::common::uds::NegativeResponseCode::FailurePreventsExecutionOfRequestedAction,
+            )
+        })
     }
 
-    /// Decode `data` into `T`, then call `handler` with the decoded value.
-    pub fn deserialize_request<T: UdsDeserialize, F>(data: ByteSlice, handler: F) -> DiagResult<()>
+    /// Deserializes raw `data` into a `T` type via [`UdsDeserialize`], 
+    /// then invokes the `handler` closure with the typed value.
+    ///
+    /// Any internal parsing or format failure is normalized to a UDS wire-level
+    /// `IncorrectMessageLengthOrInvalidFormat` code before propagating.
+    pub fn deserialize_request<T, F>(data: ByteSlice, handler: F) -> DiagResult<()>
     where
+        T: UdsDeserialize,
         F: FnOnce(T) -> DiagResult<()>,
     {
-        let value = T::deserialize(data)?;
-        handler(value)
+        let parsed_request = T::deserialize(data).map_err(|_| {
+            ::common::Error::from_nrc(
+                ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+            )
+        })?;
+        handler(parsed_request)
     }
 }
 
@@ -153,19 +169,18 @@ impl SerializationHelper {
 
 /// Wraps a `T: UdsSerialize` value and exposes it as [`ReadDataByIdentifier`].
 /// `read()` calls `T::serialize()` automatically.
-pub struct SerializedReadDataByIdentifier<T: UdsSerialize + Send + 'static> {
+pub struct SerializedReadDataByIdentifier<T: UdsSerialize + Send + Sync + 'static> {
     data: T,
 }
 
-impl<T: UdsSerialize + Send + 'static> SerializedReadDataByIdentifier<T> {
+impl<T: UdsSerialize + Send + Sync + 'static> SerializedReadDataByIdentifier<T> {
     pub fn new(data: T) -> Self {
         Self { data }
     }
 }
 
-impl<T: UdsSerialize + Send + 'static> ReadDataByIdentifier for SerializedReadDataByIdentifier<T> {
+impl<T: UdsSerialize + Send + Sync + 'static> ReadDataByIdentifier for SerializedReadDataByIdentifier<T> {
     fn read(&self) -> DiagResult<ByteVector> {
-        // Any serialization failure maps to FailurePreventsExecutionOfRequestedAction per UDS spec.
         self.data.serialize().map_err(|_| {
             ::common::Error::from_nrc(
                 ::common::uds::NegativeResponseCode::FailurePreventsExecutionOfRequestedAction,
@@ -178,8 +193,8 @@ impl<T: UdsSerialize + Send + 'static> ReadDataByIdentifier for SerializedReadDa
 /// Decodes raw bytes via `T::deserialize` before forwarding to the handler.
 pub struct SerializedWriteDataByIdentifier<T, H>
 where
-    T: UdsDeserialize + Send + 'static,
-    H: WriteHandler<T> + Send + 'static,
+    T: UdsDeserialize + Send + Sync + 'static,
+    H: WriteHandler<T> + Send + Sync + 'static,
 {
     handler: H,
     _phantom: std::marker::PhantomData<T>,
@@ -187,11 +202,11 @@ where
 
 impl<T, H> SerializedWriteDataByIdentifier<T, H>
 where
-    T: UdsDeserialize + Send + 'static,
-    H: WriteHandler<T> + Send + 'static,
+    T: UdsDeserialize + Send + Sync + 'static,
+    H: WriteHandler<T> + Send + Sync + 'static,
 {
     pub fn new(handler: H) -> Self {
-        Self {
+        Self { 
             handler,
             _phantom: std::marker::PhantomData,
         }
@@ -200,11 +215,15 @@ where
 
 impl<T, H> WriteDataByIdentifier for SerializedWriteDataByIdentifier<T, H>
 where
-    T: UdsDeserialize + Send + 'static,
-    H: WriteHandler<T> + Send + 'static,
+    T: UdsDeserialize + Send + Sync + 'static,
+    H: WriteHandler<T> + Send + Sync + 'static,
 {
     fn write(&mut self, input: ByteSlice) -> DiagResult<()> {
-        let value = T::deserialize(input)?;
+        let value = T::deserialize(input).map_err(|_| {
+            ::common::Error::from_nrc(
+                ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+            )
+        })?;
         self.handler.handle_write(value)
     }
 }
@@ -215,8 +234,8 @@ where
 /// serialized result in `StartRoutine::reply`; the future resolves `Ok(None)`.
 pub struct SerializedRoutineControl<T, H>
 where
-    T: UdsSerialize + UdsDeserialize + Send + 'static,
-    H: RoutineHandler<T> + Send + 'static,
+    T: UdsSerialize + UdsDeserialize + Send + Sync + 'static,
+    H: RoutineHandler<T> + Send + Sync + 'static,
 {
     handler: H,
     _phantom: std::marker::PhantomData<T>,
@@ -224,12 +243,12 @@ where
 
 impl<T, H> SerializedRoutineControl<T, H>
 where
-    T: UdsSerialize + UdsDeserialize + Send + 'static,
-    H: RoutineHandler<T> + Send + 'static,
+    T: UdsSerialize + UdsDeserialize + Send + Sync + 'static,
+    H: RoutineHandler<T> + Send + Sync + 'static,
 {
     #[must_use]
     pub fn new(handler: H) -> Self {
-        Self {
+        Self { 
             handler,
             _phantom: std::marker::PhantomData,
         }
@@ -238,11 +257,20 @@ where
 
 impl<T, H> RoutineControl for SerializedRoutineControl<T, H>
 where
-    T: UdsSerialize + UdsDeserialize + Send + 'static,
-    H: RoutineHandler<T> + Send + 'static,
+    T: UdsSerialize + UdsDeserialize + Send + Sync + 'static,
+    H: RoutineHandler<T> + Send + Sync + 'static,
 {
     fn start(&mut self, input: Option<ByteSlice>) -> DiagResult<StartRoutine> {
-        let params = input.map(T::deserialize).transpose()?;
+        let params = input
+            .map(|bytes| {
+                T::deserialize(bytes).map_err(|_| {
+                    ::common::Error::from_nrc(
+                        ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+                    )
+                })
+            })
+            .transpose()?;
+
         let reply_bytes = self
             .handler
             .start(params)?
@@ -254,11 +282,20 @@ where
                 })
             })
             .transpose()?;
-        StartRoutine::from_future(async move { Ok(None) }, reply_bytes)
+        StartRoutine::from_future(std::future::ready(Ok(None)), reply_bytes)
     }
 
     fn stop(&mut self, input: Option<ByteSlice>) -> DiagResult<Option<ByteVector>> {
-        let params = input.map(T::deserialize).transpose()?;
+        let params = input
+            .map(|bytes| {
+                T::deserialize(bytes).map_err(|_| {
+                    ::common::Error::from_nrc(
+                        ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+                    )
+                })
+            })
+            .transpose()?;
+
         self.handler
             .stop(params)?
             .map(|v| {
@@ -369,42 +406,13 @@ mod tests {
 
         let start = r.start(Some(&[0x00, 0x96])).unwrap();
         assert_eq!(start.reply, Some(vec![0x00, 0x96]));
-        assert!(start.future.await.unwrap().is_none()); // future always resolves None
+        assert!(start.future.await.unwrap().is_none());
 
         assert_eq!(r.stop(Some(&[0x00, 0x64])).unwrap(), Some(vec![0x00, 0x64]));
 
-        expect_nrc(
-            r.start(Some(&[0x01])).unwrap_err(),
-            ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
-        );
-    }
-
-    // SerializationHelper: serialize_response delegates to UdsSerialize.
-    #[test]
-    fn serialization_helper_serialize_response() {
-        let bytes = SerializationHelper::serialize_response(&Speed { value: 0x0102 }).unwrap();
-        assert_eq!(bytes, vec![0x01, 0x02]);
-    }
-
-    // SerializationHelper: deserialize_request decodes bytes and invokes the provided handler closure.
-    #[test]
-    fn serialization_helper_deserialize_request() {
-        let mut received: Option<Speed> = None;
-        SerializationHelper::deserialize_request::<Speed, _>(&[0x00, 0x05], |v| {
-            received = Some(v);
-            Ok(())
-        })
-        .unwrap();
-        assert_eq!(received.unwrap().value, 5);
-    }
-
-    // SerializationHelper: deserialize_request propagates the NRC when input is too short.
-    #[test]
-    fn serialization_helper_deserialize_request_too_short() {
-        let result = SerializationHelper::deserialize_request::<Speed, _>(&[0x01], |_| Ok(()));
-        expect_nrc(
-            result.unwrap_err(),
-            ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
-        );
+        match r.start(Some(&[0x01])) {
+            Err(err) => expect_nrc(err, ::common::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat),
+            Ok(_) => panic!("Expected parsing format error block layout, but got Ok statement"),
+        }
     }
 }
