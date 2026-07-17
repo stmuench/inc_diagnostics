@@ -12,11 +12,13 @@
  ********************************************************************************/
 
 pub type KeyValueAttributes = ::common::KeyValueAttributes;
+pub type JsonSchemaRequired = ::common::JsonSchemaRequired;
 pub type ReplyMessageEncoding = ::common::ReplyMessageEncoding;
 pub type ReplyMessagePayload = ::common::ReplyMessagePayload;
 pub type RequestMessagePayload = ::common::RequestMessagePayload;
 pub type DiagnosticReply = ::common::DiagnosticReply;
 pub type ByteVector = ::common::ByteVector;
+pub type ByteSlice<'a> = ::common::ByteSlice<'a>;
 pub type Result<T> = ::common::Result<T>;
 pub type ErrorCode = ::common::ErrorCode;
 pub type Error = ::common::Error;

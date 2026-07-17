@@ -41,5 +41,6 @@ rust_test(
         "//score/mw/diag/api",
         "@score_crate_index//:futures",
         "@score_crate_index//:tokio",
+        "@score_crate_index//:serde_json",
     ],
 )

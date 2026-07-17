@@ -13,7 +13,12 @@
 
 use diag_api::sovd::data_resource::*;
 use diag_api::sovd::operation::*;
-use diag_api::uds::{ReadDataByIdentifier, RoutineControl, RoutineControlAdapter, StartRoutine};
+use diag_api::sovd::DataError;
+use diag_api::uds::{
+    ReadDataByIdentifier, RoutineControl, RoutineControlAdapter, RoutineHandler,
+    SerializedReadDataByIdentifier, SerializedRoutineControl, SerializedWriteDataByIdentifier,
+    StartRoutine, UdsDeserialize, UdsSerialize, WriteHandler,
+};
 use diag_api::Result as DiagResult;
 use diag_api::*;
 
@@ -32,6 +37,111 @@ struct MyReadDataByIdentifier {}
 impl ReadDataByIdentifier for MyReadDataByIdentifier {
     fn read(&self) -> DiagResult<Vec<u8>> {
         Ok(vec![0xDE, 0xAD, 0xBE, 0xEF])
+    }
+}
+
+/**************************************************************/
+/* UDS serialization types for SerializedReadDataByIdentifier */
+/* and SerializedWriteDataByIdentifier                        */
+/**************************************************************/
+
+/// Two-byte big-endian vehicle speed value
+struct VehicleSpeed {
+    value: u16,
+}
+
+impl UdsSerialize for VehicleSpeed {
+    fn serialize(&self) -> DiagResult<Vec<u8>> {
+        Ok(self.value.to_be_bytes().to_vec())
+    }
+}
+
+impl UdsDeserialize for VehicleSpeed {
+    fn deserialize(data: &[u8]) -> DiagResult<Self> {
+        if data.len() < 2 {
+            return Err(diag_api::Error::from_nrc(
+                diag_api::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat,
+            ));
+        }
+        Ok(Self { value: u16::from_be_bytes([data[0], data[1]]) })
+    }
+}
+
+struct SpeedWriteHandler;
+
+impl WriteHandler<VehicleSpeed> for SpeedWriteHandler {
+    fn handle_write(&mut self, data: VehicleSpeed) -> DiagResult<()> {
+        println!("SpeedWriteHandler: received speed = {} km/h", data.value);
+        Ok(())
+    }
+}
+
+/********************************************************/
+/* SOVD JSON DataResource using serde serialization     */
+/********************************************************/
+
+/// SOVD JSON data resource serialized via `serde_json` on read/write.
+#[derive(Debug, Clone, PartialEq)]
+struct EngineStatus {
+    running: bool,
+    temperature_celsius: i32,
+}
+
+struct SovdEngineStatusResource {
+    status: EngineStatus,
+}
+
+impl DataResource for SovdEngineStatusResource {
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle {
+        if !matches!(input.reply_encoding, ReplyMessageEncoding::JSON(_)) {
+            return ReadValueHandle::from_error(diag_api::Error::from_error(
+                diag_api::sovd::GenericError::from_code(
+                    diag_api::sovd::ErrorCode::PreconditionNotFulfilled,
+                    "This SOVD data resource only supports JSON encoding for its reply data!".to_string(),
+                ),
+            ));
+        }
+
+        let mapped_json = serde_json::json!({
+            "running": self.status.running,
+            "temperature_celsius": self.status.temperature_celsius
+        });
+
+        ReadValueHandle::ready(ReadValueReply {
+            data: ReplyMessagePayload::from_json(mapped_json, None),
+            errors: None,
+        })
+    }
+
+    fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle {
+        let Some(RequestMessagePayload::JSON(json)) = input.user_data else {
+            return WriteValueHandle::from_error(DataError::from_error(
+                diag_api::sovd::GenericError::from_code(
+                    diag_api::sovd::ErrorCode::IncompleteRequest,
+                    "expected JSON payload".to_string(),
+                ),
+            ));
+        };
+
+        if let Some(obj) = json.as_object() {
+            let running = obj.get("running").and_then(|v| v.as_bool());
+            let temp = obj.get("temperature_celsius").and_then(|v| v.as_i64());
+
+            if let (Some(r), Some(t)) = (running, temp) {
+                self.status = EngineStatus {
+                    running: r,
+                    temperature_celsius: t as i32,
+                };
+                return WriteValueHandle::ready();
+            }
+        }
+
+        WriteValueHandle::from_error(DataError::from_error(
+            diag_api::sovd::GenericError::from_code(
+                diag_api::sovd::ErrorCode::InvalidResponseContent,
+                "Failed to deserialize EngineStatus from JSON object layout details".to_string(),
+            ),
+        ))
     }
 }
 
@@ -197,6 +307,18 @@ impl Operation for MyAsyncOperation {
     }
 }
 
+/**************************************************************/
+/* SerializedRoutineControl handler with bidirectional serde  */
+/**************************************************************/
+
+/// Echoes params back; exercises the full binary deserialize→handler→serialize round-trip.
+struct EchoSpeedRoutineHandler;
+
+impl RoutineHandler<VehicleSpeed> for EchoSpeedRoutineHandler {
+    fn start(&mut self, params: Option<VehicleSpeed>) -> DiagResult<Option<VehicleSpeed>> { Ok(params) }
+    fn stop(&mut self,  params: Option<VehicleSpeed>) -> DiagResult<Option<VehicleSpeed>> { Ok(params) }
+}
+
 /**********************/
 /* execute operations */
 /**********************/
@@ -211,6 +333,10 @@ mod tests {
     const DATA_RESOURCE_ID: &str = "my_data_resource";
     const UDS_DATA_RESOURCE_ID: &str = "uds_data_resource";
     const UDS_ROUTINE_OP_ID: &str = "my_uds_routine_op";
+    const SERIALIZED_RDBI_ID: &str = "serialized_speed_rdbi";
+    const SERIALIZED_WDBI_ID: &str = "serialized_speed_wdbi";
+    const SOVD_ENGINE_STATUS_ID: &str = "sovd_engine_status";
+    const SERIALIZED_ROUTINE_OP_ID: &str = "serialized_speed_routine";
 
     fn setup_runtime() -> Runtime {
         let runtime = Runtime::new();
@@ -265,6 +391,72 @@ mod tests {
             },
         );
 
+        // SerializedReadDataByIdentifier: VehicleSpeed value serialized automatically on read.
+        entity.register_data_resource(
+            diag_api::uds::DataResourceAdapter::new()
+                .with_rdbi(SerializedReadDataByIdentifier::new(VehicleSpeed { value: 120 })),
+            SERIALIZED_RDBI_ID.to_string(),
+            DataResourceMetadata {
+                id: SERIALIZED_RDBI_ID.to_string(),
+                name: "Vehicle Speed (Serialized RDBI)".to_string(),
+                translation_id: None,
+                read_only: true,
+                category: DataCategory::CurrentData,
+                groups: None,
+            },
+        );
+
+        // SerializedWriteDataByIdentifier: raw bytes decoded into VehicleSpeed before
+        // forwarding to SpeedWriteHandler.
+        entity.register_data_resource(
+            diag_api::uds::DataResourceAdapter::new()
+                .with_wdbi(SerializedWriteDataByIdentifier::new(SpeedWriteHandler)),
+            SERIALIZED_WDBI_ID.to_string(),
+            DataResourceMetadata {
+                id: SERIALIZED_WDBI_ID.to_string(),
+                name: "Vehicle Speed Write (Serialized WDBI)".to_string(),
+                translation_id: None,
+                read_only: false,
+                category: DataCategory::CurrentData,
+                groups: None,
+            },
+        );
+
+        // SerializedRoutineControl: deserializes binary input → EchoSpeedRoutineHandler
+        // → serializes typed reply back to binary. Full bidirectional UDS binary serialization.
+        entity.register_operation(
+            SimpleOperationAdapter::new(RoutineControlAdapter::new(
+                SerializedRoutineControl::new(EchoSpeedRoutineHandler),
+            )),
+            SERIALIZED_ROUTINE_OP_ID.to_string(),
+            OperationMetadata {
+                proximity_proof_required: false,
+                synchronous_execution: false,
+                exclusive_execution: false,
+                supported_modes: None,
+            },
+        );
+
+        // SOVD JSON DataResource: read serializes via serde_json::to_value(),
+        // write deserializes via serde_json::from_value().
+        entity.register_data_resource(
+            SovdEngineStatusResource {
+                status: EngineStatus {
+                    running: true,
+                    temperature_celsius: 90,
+                },
+            },
+            SOVD_ENGINE_STATUS_ID.to_string(),
+            DataResourceMetadata {
+                id: SOVD_ENGINE_STATUS_ID.to_string(),
+                name: "Engine Status (SOVD JSON)".to_string(),
+                translation_id: None,
+                read_only: false,
+                category: DataCategory::CurrentData,
+                groups: None,
+            },
+        );
+
         runtime
     }
 
@@ -281,7 +473,7 @@ mod tests {
             .await
         {
             SOVDReply::ListDataResources(Ok(resources)) => {
-                assert_eq!(resources.len(), 2);
+                assert_eq!(resources.len(), 5);
                 assert_eq!(resources[0].id, DATA_RESOURCE_ID);
                 assert_eq!(resources[0].name, "My Data Resource");
                 assert_eq!(resources[0].category, DataCategory::CurrentData);
@@ -770,5 +962,141 @@ mod tests {
         let _ = runtime_join_handle.await;
 
         println!("DONE");
+    }
+
+    // SerializedReadDataByIdentifier: VehicleSpeed{120} → [0x00,0x78] via binary read.
+    // SerializedWriteDataByIdentifier: [0x00,0x64] → VehicleSpeed{100} → handler.
+    #[tokio::test]
+    async fn test_serialized_rdbi_read_and_wdbi_write() {
+        let runtime = setup_runtime();
+        let runtime_join_handle = tokio::spawn(runtime.run());
+
+        // --- SerializedReadDataByIdentifier: binary read returns big-endian u16 bytes ---
+        match runtime
+            .send(SOVDMessage::ReadDataResource(
+                ENTITY_ID.to_string(),
+                SERIALIZED_RDBI_ID.to_string(),
+                ReadValueArgs::new(ReplyMessageEncoding::Binary),
+            ))
+            .await
+        {
+            SOVDReply::ReadDataResource(Ok(read_value)) => {
+                // VehicleSpeed { value: 120 } serializes to [0x00, 0x78]
+                assert_eq!(read_value.data, ReplyMessagePayload::Binary(vec![0x00, 0x78]));
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        // --- SerializedWriteDataByIdentifier: raw bytes decoded to VehicleSpeed, handler called ---
+        // [0x00, 0x64] decodes to VehicleSpeed { value: 100 } and reaches the handler
+        let mut wdbi = diag_api::uds::DataResourceAdapter::new()
+            .with_wdbi(SerializedWriteDataByIdentifier::new(SpeedWriteHandler));
+        match wdbi.write(WriteValueArgs {
+            user_data_signature: None,
+            user_data: Some(RequestMessagePayload::Binary(vec![0x00, 0x64])),
+            additional_attrs: None,
+        }) {
+            WriteValueHandle::Ready(result) => result.expect("write must succeed"),
+            WriteValueHandle::Pending(_) => panic!("expected Ready"),
+        }
+
+        runtime.shutdown().await;
+        let _ = runtime_join_handle.await;
+    }
+
+    // SOVD JSON: read → serde_json::to_value(); write → serde_json::from_value().
+    #[tokio::test]
+    async fn test_sovd_json_engine_status_read_and_write() {
+        let runtime = setup_runtime();
+        let runtime_join_handle = tokio::spawn(runtime.run());
+
+        match runtime
+            .send(SOVDMessage::ReadDataResource(
+                ENTITY_ID.to_string(),
+                SOVD_ENGINE_STATUS_ID.to_string(),
+                ReadValueArgs::new(ReplyMessageEncoding::JSON(JsonSchemaRequired::No)),
+            ))
+            .await
+        {
+            SOVDReply::ReadDataResource(Ok(read_value)) => {
+                assert_eq!(
+                    read_value.data,
+                    ReplyMessagePayload::from_json(
+                        serde_json::json!({ "running": true, "temperature_celsius": 90 }),
+                        None
+                    )
+                );
+            }
+            other => panic!("Unexpected reply: {:?}", other),
+        }
+
+        let mut resource = SovdEngineStatusResource {
+            status: EngineStatus { running: true, temperature_celsius: 90 },
+        };
+
+        // Valid JSON updates the resource state.
+        match resource.write(WriteValueArgs {
+            user_data_signature: None,
+            user_data: Some(RequestMessagePayload::JSON(
+                serde_json::json!({ "running": false, "temperature_celsius": 75 }),
+            )),
+            additional_attrs: None,
+        }) {
+            WriteValueHandle::Ready(result) => {
+                result.expect("write must succeed");
+                assert_eq!(resource.status, EngineStatus { running: false, temperature_celsius: 75 });
+            }
+            WriteValueHandle::Pending(_) => panic!("expected Ready"),
+        }
+
+        // Invalid JSON shape must be rejected.
+        let _ = match resource.write(WriteValueArgs {
+            user_data_signature: None,
+            user_data: Some(RequestMessagePayload::JSON(serde_json::json!({ "unknown": 0 }))),
+            additional_attrs: None,
+        }) {
+            WriteValueHandle::Ready(result) => result.expect_err("invalid JSON must be rejected"),
+            WriteValueHandle::Pending(_) => panic!("expected Ready"),
+        };
+
+        // Non-JSON encoding must be rejected — this data resource is JSON-only.
+        match (SovdEngineStatusResource { status: EngineStatus { running: true, temperature_celsius: 90 } })
+            .read(ReadValueArgs::new(ReplyMessageEncoding::Binary))
+        {
+            ReadValueHandle::Ready(Err(err)) => match err.code {
+                ErrorCode::SOVD(ref e) => assert_eq!(e.sovd_error, "precondition-not-fulfilled"),
+                _ => panic!("expected SOVD error"),
+            },
+            _ => panic!("expected Ready(Err(..))"),
+        }
+
+        runtime.shutdown().await;
+        let _ = runtime_join_handle.await;
+    }
+
+    // SerializedRoutineControl: binary → deserialize → handler → serialize → binary (bidirectional).
+    #[test]
+    fn test_serialized_routine_control_bidirectional() {
+        let mut routine = SerializedRoutineControl::new(EchoSpeedRoutineHandler);
+
+        // [0x00, 0x96] = VehicleSpeed { value: 150 } — echoed back as serialized reply
+        let start = routine.start(Some(&[0x00, 0x96])).expect("start must succeed");
+        assert_eq!(start.reply, Some(vec![0x00, 0x96]));
+
+        // [0x00, 0x64] = VehicleSpeed { value: 100 }
+        assert_eq!(routine.stop(Some(&[0x00, 0x64])).expect("stop must succeed"), Some(vec![0x00, 0x64]));
+
+        // Too-short input must be rejected.
+        match routine.start(Some(&[0x01])) {
+            Err(err) => {
+                assert_eq!(
+                    err.code,
+                    diag_api::ErrorCode::UDS(
+                        diag_api::uds::NegativeResponseCode::IncorrectMessageLengthOrInvalidFormat
+                    )
+                );
+            }
+            Ok(_) => panic!("Expected message size formatting error pattern, but got Ok response"),
+        }
     }
 }
