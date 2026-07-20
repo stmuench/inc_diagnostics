@@ -17,12 +17,14 @@ pub type ReplyMessagePayload = ::common::ReplyMessagePayload;
 pub type RequestMessagePayload = ::common::RequestMessagePayload;
 pub type DiagnosticReply = ::common::DiagnosticReply;
 pub type ByteVector = ::common::ByteVector;
+pub type JsonSchema = ::common::JsonSchema;
 pub type Result<T> = ::common::Result<T>;
 pub type ErrorCode = ::common::ErrorCode;
 pub type Error = ::common::Error;
 
 pub mod uds {
     pub use common::uds::*;
+    pub use registration::*;
     pub use uds::*;
     pub use uds_adapters::*;
 }
@@ -36,12 +38,13 @@ pub mod sovd {
         pub use data_resource::sovd::*;
         pub use data_resource::*;
     }
-
-    pub use operation::Operation; // for users' convenience
-    pub use operation::SimpleOperation; // for users' convenience
-
+    pub use operation::{Operation, SimpleOperation}; // for users' convenience
     pub mod operation {
         pub use operation::*;
         pub use simple_operation::*;
+    }
+
+    pub mod registration {
+        pub use registration::*;
     }
 }

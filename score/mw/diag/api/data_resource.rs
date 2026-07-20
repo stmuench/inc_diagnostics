@@ -200,6 +200,22 @@ impl WriteValueHandle {
 /* Data Resource API     */
 /*************************/
 
+/// Trait for read-only data resources.
+///
+/// Implement this when your resource only supports reading.
+/// Register with `DiagnosticServicesCollectionBuilder::with_read_resource`.
+pub trait ReadOnlyDataResource {
+    fn read(&self, input: ReadValueArgs) -> ReadValueHandle;
+}
+
+/// Trait for write-only data resources.
+///
+/// Implement this when your resource only supports writing.
+/// Register with `DiagnosticServicesCollectionBuilder::with_write_resource`.
+pub trait WritableDataResource {
+    fn write(&mut self, input: WriteValueArgs) -> WriteValueHandle;
+}
+
 /// Trait for a single data resource provider.
 ///
 /// Implementations may optionally also provide write access to a specific data value

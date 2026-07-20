@@ -42,9 +42,7 @@ pub type ExecutionTimeout = Duration;
 static EXECUTION_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 fn issue_new_execution_id() -> ExecutionId {
-    EXECUTION_ID_COUNTER
-        .fetch_add(1, Ordering::Relaxed)
-        .to_string()
+    EXECUTION_ID_COUNTER.fetch_add(1, Ordering::Relaxed).to_string()
 }
 
 // this message type is for demonstration purposes only
@@ -88,27 +86,19 @@ struct ExecutionControlImpl {
 
 impl ExecutionControlImpl {
     fn new(exec_events: mpsc::Receiver<ExecutionEvent>, exec_id: ExecutionId) -> Self {
-        Self {
-            exec_events,
-            exec_id,
-        }
+        Self { exec_events, exec_id }
     }
 }
 
 impl futures::Stream for ExecutionControlImpl {
     type Item = ExecutionEvent;
-    fn poll_next(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Option<Self::Item>> {
+    fn poll_next(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Option<Self::Item>> {
         self.get_mut().exec_events.poll_recv(cx)
     }
 }
 
 impl ExecutionControl for ExecutionControlImpl {
-    fn exec_id(&self) -> &ExecutionId {
-        &self.exec_id
-    }
+    fn exec_id(&self) -> &ExecutionId { &self.exec_id }
 }
 
 /**********************/
@@ -125,11 +115,7 @@ enum ActiveExecution {
 
 impl ActiveExecution {
     fn try_resolve(&mut self) {
-        if let ActiveExecution::Running {
-            join_handle: Some(handle),
-            ..
-        } = self
-        {
+        if let ActiveExecution::Running { join_handle: Some(handle), .. } = self {
             if handle.is_finished() {
                 let old = std::mem::replace(
                     self,
@@ -188,16 +174,11 @@ pub struct Runtime {
 
 impl Runtime {
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(RuntimeImpl::new())),
-        }
+        Self { inner: Arc::new(Mutex::new(RuntimeImpl::new())) }
     }
 
     pub fn get_or_create_entity(&self, id: EntityId) -> Arc<Entity> {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .get_or_create_entity(id)
+        self.inner.lock().expect("mutex acquisition failed").get_or_create_entity(id)
     }
 
     pub fn run(&self) -> impl Future<Output = ()> {
@@ -206,17 +187,16 @@ impl Runtime {
 
     // This method is for demonstration purposes only!
     pub fn send(&self, message: SOVDMessage) -> impl Future<Output = SOVDReply> {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .send(message)
+        self.inner.lock().expect("mutex acquisition failed").send(message)
     }
 
     pub fn shutdown(&self) -> impl Future<Output = ()> {
-        self.inner
-            .lock()
-            .expect("mutex acquisition failed")
-            .shutdown()
+        self.inner.lock().expect("mutex acquisition failed").shutdown()
+    }
+
+    /// Removes a previously registered entity from the runtime (deregistration / cleanup).
+    pub fn remove_entity(&self, id: &EntityId) -> bool {
+        self.inner.lock().expect("mutex acquisition failed").remove_entity(id)
     }
 }
 
@@ -230,8 +210,7 @@ struct RuntimeImpl {
 
 impl RuntimeImpl {
     pub fn new() -> Self {
-        let (sovd_sender, sovd_receiver) =
-            mpsc::channel::<(SOVDMessage, oneshot::Sender<SOVDReply>)>(10);
+        let (sovd_sender, sovd_receiver) = mpsc::channel::<(SOVDMessage, oneshot::Sender<SOVDReply>)>(10);
         let (shutdown_sender, shutdown_receiver) = oneshot::channel();
         RuntimeImpl {
             entities: Arc::new(Mutex::new(IndexMap::<EntityId, Arc<Entity>>::new())),
@@ -337,8 +316,7 @@ impl RuntimeImpl {
                 });
                 let reply = match exec_control {
                     Ok(exec_control) => {
-                        let event =
-                            ExecutionEvent::new(ExecutionEventKind::HandleCustomCapability(value));
+                        let event = ExecutionEvent::new(ExecutionEventKind::HandleCustomCapability(value));
                         exec_control.send(event).await.map_err(|_| {
                             DiagError::from_error(sovd::GenericError::from_code(
                                 sovd::ErrorCode::ErrorResponse,
@@ -458,7 +436,13 @@ impl RuntimeImpl {
             .clone()
     }
 
-    // FIXME: implement unregister_entity(&self, id: EntityId)
+    pub fn remove_entity(&mut self, id: &EntityId) -> bool {
+        self.entities
+            .lock()
+            .expect("mutex acquisition failed")
+            .swap_remove(id)
+            .is_some()
+    }
 
     pub fn shutdown(&mut self) -> impl Future<Output = ()> {
         let request_shutdown = self
@@ -483,7 +467,7 @@ impl Entity {
         Self {
             data_resources: Mutex::new(IndexMap::<DataResourceId, DataResourceHolder>::new()),
             operations: Mutex::new(IndexMap::<OperationId, OperationHolder>::new()),
-            id: id,
+            id,
         }
     }
 
@@ -828,5 +812,234 @@ impl OperationHolder {
             instance: Box::new(op),
             executions: IndexMap::<ExecutionId, ActiveExecution>::new(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use diag_api::sovd::data_resource::DataCategory;
+    use diag_api::sovd::operation::ExecutionHandle;
+    use diag_api::JsonSchema;
+
+    #[derive(Clone)]
+    struct ReadOnlyResource;
+
+    impl DataResource for ReadOnlyResource {
+        fn read(&self, _args: ReadValueArgs) -> ReadValueHandle {
+            ReadValueHandle::ready(ReadValueReply {
+                data: ReplyMessagePayload::UTF8("value".to_string()),
+                errors: None,
+            })
+        }
+    }
+
+    #[derive(Clone)]
+    struct NoOpOperation;
+
+    impl Operation for NoOpOperation {
+        fn execute(
+            &mut self,
+            _input: ExecuteArguments,
+            _control: Box<dyn ExecutionControl>,
+        ) -> DiagResult<ExecutionHandle> {
+            Ok(ExecutionHandle::from_closure(|| Ok(DiagnosticReply::default())))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Minimal DiagnosticEntity used only inside this test module
+    // -----------------------------------------------------------------------
+    struct VehicleEntity {
+        id: String,
+    }
+
+    impl VehicleEntity {
+        fn new(id: impl Into<String>) -> Self { Self { id: id.into() } }
+    }
+
+    impl diag_api::sovd::registration::DiagnosticEntity for VehicleEntity {
+        fn entity_id(&self) -> &str { &self.id }
+    }
+
+    // -----------------------------------------------------------------------
+    // A ServiceRegistrar implementation that bridges the builder collection
+    // into the Runtime.  In production this would live inside the runtime
+    // crate; here it is inlined so the test is self-contained.
+    // -----------------------------------------------------------------------
+    struct RuntimeServiceRegistrar {
+        runtime: Arc<Runtime>,
+    }
+
+    impl diag_api::sovd::registration::ServiceRegistrar for RuntimeServiceRegistrar {
+        /// Consumes the collection and registers every service with the runtime.
+        ///
+        /// The entity is created (or retrieved) by its ID.  Each data-resource
+        /// and operation stored in the collection is transferred into the
+        /// corresponding `Entity`, together with minimal metadata derived from
+        /// the service ID.
+        ///
+        /// Returns a [`RegistrationHandle`] — the app must keep it alive for
+        /// as long as services should remain registered.  Dropping it calls
+        /// `remove_entity` automatically via the handle's `Drop` impl.
+        fn register_sovd_services<'entity>(
+            &self,
+            collection: diag_api::sovd::registration::DiagnosticServicesCollection<'entity>,
+        ) -> DiagResult<diag_api::sovd::registration::RegistrationHandle> {
+            let entity_id = collection.entity().entity_id().to_string();
+            let entity = self.runtime.get_or_create_entity(entity_id.clone());
+
+            // Register data resources — iterate the metadata IndexMap; real
+            // metadata flows directly from the collection without any guessing.
+            for (id, (metadata, _schema)) in collection.data_resources() {
+                // In a real runtime the boxed resource would be moved directly
+                // into the entity. Here we register a placeholder so the flow
+                // is exercisable end-to-end without unsafe pointer casts.
+                entity.register_data_resource(
+                    ReadOnlyResource,
+                    id.to_string(),
+                    metadata.clone(),
+                );
+            }
+
+            // Register operations — iterate the metadata IndexMap.
+            for (id, metadata) in collection.operations() {
+                entity.register_operation(
+                    NoOpOperation,
+                    id.to_string(),
+                    metadata.clone(),
+                );
+            }
+
+            // Return a RAII handle — dropping it deregisters the entity.
+            let runtime = Arc::clone(&self.runtime);
+            Ok(diag_api::sovd::registration::RegistrationHandle::new(move || {
+                let _ = runtime.remove_entity(&entity_id);
+            }))
+        }
+
+        fn register_uds_services(
+            &self,
+            _collection: diag_api::sovd::registration::UdsServicesCollection,
+        ) -> DiagResult<diag_api::sovd::registration::RegistrationHandle> {
+            Ok(diag_api::sovd::registration::RegistrationHandle::new(|| {}))
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: DiagnosticServicesCollectionBuilder -> ServiceRegistrar -> Runtime
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_builder_collection_service_registration_flow() {
+        use diag_api::sovd::registration::{
+            DiagnosticServicesCollectionBuilder, ServiceRegistrar as _,
+        };
+
+        // ==================================================================
+        // USER-FACING (application code)
+        // This is what application code writes.  The user never touches the
+        // Runtime directly — only the builder and the ServiceRegistrar.
+        // ==================================================================
+
+        // Create entity
+        let entity = VehicleEntity::new("vehicle-ecu-1");
+
+        // Build collection using the builder (validates configuration)
+        let collection = DiagnosticServicesCollectionBuilder::new(entity)
+            .with_data_resource(
+                ReadOnlyResource,
+                DataResourceMetadata {
+                    id: "vehicle_id".to_string(),
+                    name: "Vehicle Identification".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::CurrentData,
+                    groups: None,
+                },
+                JsonSchema::Null,
+            )
+            .with_data_resource(
+                ReadOnlyResource,
+                DataResourceMetadata {
+                    id: "diagnostic_state".to_string(),
+                    name: "Diagnostic State".to_string(),
+                    translation_id: None,
+                    read_only: true,
+                    category: DataCategory::CurrentData,
+                    groups: None,
+                },
+                JsonSchema::Null,
+            )
+            .with_operation(
+                NoOpOperation,
+                "validate_vin",
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .with_operation(
+                NoOpOperation,
+                "run_diagnostics",
+                OperationMetadata {
+                    proximity_proof_required: false,
+                    synchronous_execution: true,
+                    exclusive_execution: false,
+                    supported_modes: None,
+                },
+            )
+            .build()
+            .expect("collection should build and validate without errors");
+
+        // Pass collection to ServiceRegistrar (user code ends here)
+        // (the binding layer that connects user code to the runtime)
+        let runtime = Arc::new(Runtime::new());
+        let registrar = RuntimeServiceRegistrar { runtime: Arc::clone(&runtime) };
+
+        // register_sovd_services returns a RegistrationHandle — must be stored
+        // alive for as long as services should remain registered.
+        let registration_handle = registrar.register_sovd_services(collection);
+
+        // ==================================================================
+        // RUNTIME INTERNAL IMPLEMENTATION
+        // Everything below represents what happens inside the runtime after
+        // the ServiceRegistrar consumes the collection.
+        // ==================================================================
+
+        // Register application: verify registration succeeded
+        assert!(
+            registration_handle.is_ok(),
+            "service registration must succeed: {:?}",
+            registration_handle
+        );
+        let registration_handle = registration_handle.unwrap();
+
+        // Get entity from the runtime (runtime internal use)
+        let registered_entity = runtime.get_or_create_entity("vehicle-ecu-1".to_string());
+
+        // Verify operations are discoverable from the runtime
+        let operations = registered_entity.list_operations();
+        assert_eq!(operations.len(), 2,
+            "runtime should expose exactly 2 operations after registration");
+
+        // Verify data resources are discoverable from the runtime
+        let data_resources = registered_entity.list_data_resources();
+        assert_eq!(data_resources.len(), 2,
+            "runtime should expose exactly 2 data resources after registration");
+
+        // Cleanup: drop the handle — this triggers automatic deregistration
+        // via RegistrationHandle::drop(), which calls remove_entity() internally.
+        drop(registration_handle);
+
+        // Confirm entity is no longer registered
+        // (get_or_create_entity re-creates an empty entity, so we check it is empty)
+        let after_removal = runtime.get_or_create_entity("vehicle-ecu-1".to_string());
+        assert_eq!(after_removal.list_data_resources().len(), 0,
+            "deregistered entity must have no data resources");
+        assert_eq!(after_removal.list_operations().len(), 0,
+            "deregistered entity must have no operations");
     }
 }

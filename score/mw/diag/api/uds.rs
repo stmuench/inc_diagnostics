@@ -28,6 +28,14 @@ pub trait WriteDataByIdentifier {
     fn write(&mut self, input: ByteSlice) -> DiagResult<()>;
 }
 
+/// UDS DataIdentifier — combined read+write service (cf. ISO 14229-1:2020, Services 0x22/0x2E).
+///
+/// A blanket implementation is provided for any type that implements both
+/// [`ReadDataByIdentifier`] and [`WriteDataByIdentifier`].
+pub trait DataIdentifier: ReadDataByIdentifier + WriteDataByIdentifier {}
+
+impl<T: ReadDataByIdentifier + WriteDataByIdentifier> DataIdentifier for T {}
+
 /// UDS RoutineControl service (cf. ISO 14229-1:2020, Service 0x31).
 /// NOTE: request routine results (sub-function 0x03) will get handled
 ///       implicitly by the diag runtime via `ExecutionEvent::ReportStatus`.
